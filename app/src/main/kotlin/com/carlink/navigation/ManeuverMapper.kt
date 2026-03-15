@@ -121,6 +121,10 @@ object ManeuverMapper {
                 }
 
                 // keepRight
+                15 -> Maneuver.TYPE_FERRY_BOAT // enterFerry
+                16 -> Maneuver.TYPE_FERRY_BOAT // exitFerry
+                17 -> Maneuver.TYPE_FERRY_BOAT // changeFerry
+
                 18 -> {
                     if (isLeftDrive) {
                         Maneuver.TYPE_U_TURN_RIGHT // uTurnToRoute

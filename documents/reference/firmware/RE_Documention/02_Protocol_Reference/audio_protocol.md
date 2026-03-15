@@ -31,7 +31,7 @@ The CarPlay audio protocol uses message type `0x07` (AudioData) with two key ide
 ├─────────┴──────┴────────────┴───────────────────────────────────────┤
 │                    AUDIO HEADER (12 bytes)                          │
 ├─────────┬──────┬────────────┬───────────────────────────────────────┤
-│ 0x10    │  4   │ decode_type│ Audio format (2, 4, or 5)             │
+│ 0x10    │  4   │ decode_type│ Audio format (2, 3, 4, or 5)           │
 │ 0x14    │  4   │ volume     │ Float volume multiplier (0.0-1.0)     │
 │ 0x18    │  4   │ audio_type │ Stream type (1=main, 2=nav, 3=mic)    │
 ├─────────┴──────┴────────────┴───────────────────────────────────────┤
@@ -54,11 +54,13 @@ PayloadLen = 12 (audio header) + audio_payload_size
 | **4** | PLAYBACK | 48kHz | Stereo | Standard CarPlay HD audio |
 | **5** | VOICE | 16kHz | Mono | Voice mode (Siri, phone calls) |
 
-**Important:** Values 1, 3, 6, 7 were speculative in older docs and **NEVER observed** in USB captures.
+**Important:** Values 1, 6, 7 are firmware-supported but not observed in USB captures. Value 3 (8kHz) is actively used for Android Auto phone calls (HFP/SCO narrowband, verified Mar 2026).
 
-### decode_type=3 (8kHz Narrowband) - VERIFIED UNOBSERVABLE (Jan 2026)
+### decode_type=3 (8kHz Narrowband) - Active for Android Auto Phone Calls
 
-**Binary analysis confirms** the firmware supports decodeType=3 → 8000 Hz mono at WebRTC AECM (0x2dfa2). However, extensive testing (CallQuality 0/1/2, multiple phone calls) **never triggered 8kHz audio**.
+**Update (Mar 2026):** decode_type=3 IS used for Android Auto phone calls. The Jan 2026 analysis was CarPlay-only. See `../03_Audio_Processing/microphone_processing.md` § AA Phone Call Microphone — FIXED.
+
+**Binary analysis confirms** the firmware supports decodeType=3 → 8000 Hz mono at WebRTC AECM (0x2dfa2). During Android Auto phone calls (HFP/SCO), the adapter sends `INPUT_CONFIG` with decodeType=3, requiring the host to capture and send mic audio at 8kHz. CarPlay phone calls continue to use decodeType=5 (16kHz) exclusively.
 
 **Why 8kHz is not observed:**
 
@@ -340,10 +342,10 @@ VOL packet (vol=1.0)             ← Restore media
 | Siri (speaker) | 5 | 1 | 0x08 | - | 16kHz |
 | Siri (mic) | 5 | 3 | 0x03 | - | 16kHz |
 | Phone (speaker) | 5 | 1 | 0x05 | - | 16kHz |
-| Phone (mic) | 5 | 3 | 0x03 | - | 16kHz (8kHz in firmware code but vestigial — never observed) |
+| Phone (mic) | 5 (CarPlay) / 3 (AA) | 3 | 0x03 | - | 16kHz for CarPlay, 8kHz for Android Auto phone calls (HFP/SCO) |
 | Ringtone | 2/4 | 1 | 0x0C | 0x0D | 44.1/48kHz |
 
-**Microphone Note:** Microphone audio (audio_type=3) must be 16kHz in practice. The firmware WebRTC AECM at `0x2dfa2` accepts only 8kHz or 16kHz and rejects other rates, but 8kHz is vestigial dead code — never observed in 22+ capture sessions. The `CallQuality→VoiceQuality` firmware bug and modern iPhone wideband negotiation ensure only 16kHz is ever used. See `../03_Audio_Processing/audio_formats.md` for full binary analysis.
+**Microphone Note:** Microphone audio (audio_type=3) must be 8kHz or 16kHz. The firmware WebRTC AECM at `0x2dfa2` accepts only these two rates. CarPlay uses 16kHz exclusively (iPhone wideband negotiation). Android Auto phone calls use 8kHz (HFP/SCO narrowband) — the adapter sends `INPUT_CONFIG` with decodeType=3 to signal 8kHz. Host apps must parse `decodeType` from the adapter's AudioData command and set mic capture rate accordingly. See `../03_Audio_Processing/microphone_processing.md` § AA Phone Call Microphone for the full fix.
 
 ---
 

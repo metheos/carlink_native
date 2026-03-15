@@ -159,7 +159,7 @@ Verified from firmware switch statement at fcn.00017b74.
 - 429 navigation video packets analyzed
 - Resolution: 1200x500 (matches host's naviScreenInfo configuration)
 - NAL distribution: 4 SPS (I-frames), 425 P-frames
-- Unknown1 field: Always 1 (does NOT indicate frame type)
+- EncoderState field: Always 1 for nav video (does NOT indicate frame type)
 - Frame type determined by NAL unit type in H.264 payload
 
 **Requirements (Corrected Feb 2026):**
@@ -561,7 +561,7 @@ Run 6 captured an abnormally small first IDR of **1,206 bytes** (vs typical 9–
 
 **Impact**: All P-frames following a boot-screen IDR reference this low-quality frame, causing ~2 seconds of degraded output until the next ForceKeyFrame triggers a clean IDR at full resolution.
 
-**Mitigation**: `H264Renderer.flushOnNextIdr` — flush the codec on the second IDR to clear poisoned reference frames. This is decoder-side only; no adapter commands are involved.
+**Mitigation**: `AA_RENDER_SKIP_COUNT=4` — skip first 4 decoded frames in Android Auto mode, preventing boot-screen display entirely. The decoder warms up cleanly before rendering starts. This is decoder-side only; no adapter commands are involved. (Earlier `flushOnNextIdr` approach was removed as inferior.)
 
 ### Android Auto Boot-Screen IDR Poisoning (Mar 2026)
 
@@ -576,7 +576,7 @@ AA boot-screen IDR poisoning is **deterministic and severe** — far worse than 
 
 The 2,735B IDR encodes the AA startup animation — a nearly uniform dark background that compresses to <3KB for 921,600 pixels (1280×720). All subsequent P-frames reference this degenerate IDR until the next natural IDR at ~65 seconds.
 
-**`flushOnNextIdr` mechanism**: Flushes codec on the second IDR (the natural IDR at ~65s) to clear poisoned references. However, the flush **drops** that IDR — the next P-frames reference nothing, causing a brief glitch at the flush point. The watchdog then detects zombie codec (Rx:N Dec:0 for 2s) and triggers a reset + re-sync.
+**Current mitigation (`AA_RENDER_SKIP_COUNT=4`)**: Skips the first 4 decoded frames without rendering them (releases with `shouldRender=false`). This prevents the boot-screen from ever being displayed and allows the codec to warm up cleanly. Matches AutoKit's behavior. The earlier `flushOnNextIdr` approach (flush codec on second IDR) was removed because it dropped the IDR and caused a brief glitch requiring watchdog recovery.
 
 ---
 
@@ -817,9 +817,9 @@ Offset  Size  Field         Example
 ------  ----  -----         -------
 0x10    4     Width         1200 (0x04B0)
 0x14    4     Height        500 (0x01F4)
-0x18    4     TotalSize     Frame data size
-0x1C    4     FrameSize     H.264 NAL unit size
-0x20    4     Flags         EncoderState (see above)
+0x18    4     EncoderState  Encoder generation/stream ID (typically 1)
+0x1C    4     PTS           Presentation timestamp (1kHz clock)
+0x20    4     Flags         Usually 0x00000000
 ```
 Note: Offsets are relative to USB message start (16-byte USB header + 20-byte video header = 36 bytes total).
 
@@ -1143,6 +1143,8 @@ STATUS:  Verified across 538+ IDR frames
 Rule: Deep buffering (seconds) is counterproductive for projection video.
       Drop frames rather than buffer for "smooth playback."
 ```
+
+> **Manufacturer reference (PhoneMirrorBox r5889):** When decode buffer backlog exceeds 2× framerate (e.g., >120 frames at 60fps), the reference app requests a keyframe via `CarPlay_RequestKeyFrame` (sub-cmd 12), then clears all buffered frames, then sets a flag to discard P-frames until the next IDR arrives. AutoKit (2025.03) uses a different strategy: blocking `dequeueInputBuffer` with a long timeout, plus output-side frame dropping based on presentation timing.
 
 ### GOP Structure
 

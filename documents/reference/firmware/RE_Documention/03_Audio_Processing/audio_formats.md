@@ -25,7 +25,7 @@ The adapter uses a `decodeType` value (4-byte LE integer) in AudioData messages 
 |------------|-------------|----------|------|----------|----------------|
 | 1 | 44100 Hz | 2 (stereo) | 16 | Media playback (44.1kHz CD quality) | **[Not observed on USB]** |
 | 2 | 44100 Hz | 2 (stereo) | 16 | 44.1kHz media OR stop/cleanup commands (dual-purpose) | Capture-verified |
-| 3 | 8000 Hz | 1 (mono) | 16 | Phone call narrow-band **(LEGACY - not observed in modern implementations, CarPlay uses 16kHz)** | **[Not observed on USB]** |
+| 3 | 8000 Hz | 1 (mono) | 16 | Phone call narrow-band — active for AA phone calls (HFP/SCO 8kHz). Not used by CarPlay (uses 16kHz). | Verified (AA, Mar 2026) |
 | 4 | 48000 Hz | 2 (stereo) | 16 | Media HD / Standard CarPlay | Capture-verified |
 | 5 | 16000 Hz | 1 (mono) | 16 | Siri / Phone / Mic input | Capture-verified |
 | 6 | 24000 Hz | 1 (mono) | 16 | Voice recognition | **[Not observed on USB]** |
@@ -55,7 +55,7 @@ Audio Types:
 - Media: 48kHz stereo (decodeType=4) or 44.1kHz stereo (decodeType=1,2)
 - Navigation: 48kHz stereo (decodeType=4) or 44.1kHz stereo (decodeType=2)
 - Alerts: 48kHz stereo (decodeType=4)
-- Phone Call: 16kHz mono (decodeType=5). Note: 8kHz (decodeType=3) exists in firmware code but is vestigial — never observed in 22+ capture sessions.
+- Phone Call: 16kHz mono (decodeType=5) for CarPlay; 8kHz mono (decodeType=3) for Android Auto phone calls (HFP/SCO narrowband).
 
 Processing: Minimal - primarily pass-through with format signaling
 ```
@@ -87,8 +87,8 @@ Processing Applied:
 
 Expected Mic Format (WebRTC validated):
 - Siri: 16kHz mono (decodeType=5)
-- Phone Call: 16kHz mono (decodeType=5). Note: 8kHz (decodeType=3) accepted by WebRTC AECM binary but is vestigial — configuring for it has no effect, and it was never observed in any capture session.
-- NOTE: Only 8kHz and 16kHz pass WebRTC AECM validation; in practice only 16kHz is used
+- Phone Call: 16kHz mono (decodeType=5) for CarPlay; 8kHz mono (decodeType=3) for Android Auto phone calls (HFP/SCO). Host must use decodeType from adapter's INPUT_CONFIG.
+- NOTE: Only 8kHz and 16kHz pass WebRTC AECM validation. Both are actively used: 16kHz for CarPlay/Siri, 8kHz for AA phone calls
 ```
 
 ---
@@ -231,29 +231,32 @@ The firmware's `ConfigFileUtils` fails to translate the host app's `callQuality`
 
 ### 1. Phone Call Sample Rate
 
-**Finding:** The firmware WebRTC binary accepts both 8kHz and 16kHz, but **only 16kHz is used in practice**.
+**Update (Mar 2026):** Both 8kHz and 16kHz are actively used. Android Auto phone calls use 8kHz (decodeType=3) via HFP/SCO. CarPlay uses 16kHz exclusively. See `microphone_processing.md` § AA Phone Call Microphone — FIXED.
+
+**Finding:** The firmware WebRTC binary accepts both 8kHz and 16kHz.
 
 **Binary evidence (0x2dfa2):**
 - WebRtcAecm_Init code paths accept 8000 Hz OR 16000 Hz
 - 4 AEC call sites pass 8000, 20 call sites pass 16000
-- The 8kHz code paths are **vestigial** — never triggered in 22+ capture sessions
+- The 8kHz code paths are active for AA phone calls; vestigial for CarPlay only
 
-**Why 8kHz is dead code:**
-1. The `CallQuality→VoiceQuality` translation has a firmware bug (see above), so configuring for 8kHz has no effect
+**Why 8kHz is not used for CarPlay:**
+1. The `CallQuality→VoiceQuality` translation has a firmware bug (see above), so configuring for 8kHz has no effect on CarPlay
 2. Modern iPhones (iOS 16+) always negotiate 16kHz (wideband) for CarPlay telephony
 3. Attempting to configure `CallQuality=0` (which would theoretically request narrowband 8kHz) produces the error `"apk callQuality value transf box value error"` and is never applied
 
-**Observation from carlink_native:**
+**Current carlink_native implementation (Mar 2026):**
 ```kotlin
 AudioCommand.AUDIO_PHONECALL_START -> {
-    startMicrophoneCapture(decodeType = 5, audioType = 3)  // 16kHz — the only rate ever observed
+    val micDecodeType = lastIncomingDecodeType  // Dynamic: 5 for CarPlay, 3 for AA
+    startMicrophoneCapture(decodeType = micDecodeType, audioType = 3)
 }
 ```
 
 **Implications:**
-- Host apps should use **16kHz mono** (decodeType=5) for all phone call microphone audio
-- While the binary accepts 8kHz at the WebRTC AECM level, no configuration or phone negotiation triggers it
-- Host apps should still parse `decodeType` from the adapter's AudioData command for forward compatibility
+- Host apps should use the `decodeType` from the adapter's `INPUT_CONFIG` command to set mic sample rate
+- CarPlay phone calls use 16kHz mono (decodeType=5); Android Auto phone calls use 8kHz mono (decodeType=3)
+- See `microphone_processing.md` § AA Phone Call Microphone for the complete fix and verification
 
 ### 2. Audio Format from Adapter Must Be Used
 
@@ -325,7 +328,7 @@ The firmware can write debug PCM files:
 **Answer: Minimal processing / Pass-through**
 - Audio is received from CarPlay/AndroidAuto via iAP2
 - Format is signaled to host via decodeType
-- Host must handle the format (44.1kHz, 48kHz stereo for media; 16kHz mono for voice — 8kHz exists in firmware code but is vestigial)
+- Host must handle the format (44.1kHz, 48kHz stereo for media; 16kHz mono for CarPlay voice; 8kHz mono for AA phone calls)
 
 ### Host → Phone (Microphone)
 **Answer: YES - Active processing**
@@ -339,9 +342,9 @@ The firmware can write debug PCM files:
 
 **Host app should send microphone audio:**
 - **Siri/Voice Recognition:** 16000 Hz, 1 channel, 16-bit PCM (decodeType=5)
-- **Phone Calls:** 16000 Hz, 1 channel, 16-bit PCM (decodeType=5) — the only rate observed in practice
-- **IMPORTANT:** Use the `decodeType` from the adapter's AudioData command message for forward compatibility
-- **Note:** 8kHz (decodeType=3) is accepted by the WebRTC AECM binary but is vestigial dead code — no configuration or phone negotiation triggers it
+- **Phone Calls (CarPlay):** 16000 Hz, 1 channel, 16-bit PCM (decodeType=5)
+- **Phone Calls (Android Auto):** 8000 Hz, 1 channel, 16-bit PCM (decodeType=3) — HFP/SCO narrowband
+- **IMPORTANT:** Use the `decodeType` from the adapter's AudioData/INPUT_CONFIG command message — do not hardcode
 
 **Firmware-supported mic sample rates (binary verified):**
 - 8000 Hz (0x1F40) - narrowband

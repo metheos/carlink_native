@@ -77,7 +77,7 @@ Versions **2024.09.03** and **2025.10.15** have init scripts that reference WiFi
 | Version | Removed |
 |---------|---------|
 | 2024.01.19 | boxImgTools (replaced with .zip), wl |
-| 2025.10.15 | ARMimg_maker |
+| 2025.10.15 | ~~ARMimg_maker~~ (earlier analysis claimed removal; binary confirmed present in 2025.02 and 2025.10 extracted rootfs — needs re-verification) |
 
 ### ARMadb-driver Size Evolution
 
@@ -123,6 +123,8 @@ cdc_ncm.ko
 + snd-soc-imx-btsco.ko  (i.MX Bluetooth SCO)
 ```
 
+> **Note:** `g_android_autobox.ko` was removed between 2024.09.03 and 2025.02.25 (not present in 2025.02 or 2025.10 extracted rootfs).
+
 ---
 
 ## Script Evolution
@@ -158,8 +160,8 @@ cdc_ncm.ko
 
 | Version | p2p_oper_channel |
 |---------|------------------|
-| 2022-2024.08 | 36 |
-| 2024.09+ | 149 |
+| 2022-2023.09 | 36 |
+| 2024.01+ | 149 |
 
 ### udhcpd.conf
 

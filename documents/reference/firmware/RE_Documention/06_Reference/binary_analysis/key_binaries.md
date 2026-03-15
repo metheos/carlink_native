@@ -14,11 +14,11 @@
 | ARMiPhoneIAP2 | 182KB | 494KB | iPhone IAP2 protocol handler |
 | ARMadb-driver | 217KB | 479KB | Main USB protocol handler |
 | ARMAndroidAuto | 489KB | 1,489KB | Android Auto protocol handler |
-| ARMHiCar | - | 132KB | Huawei HiCar support |
-| ARMandroid_Mirror | - | 106KB | Android mirroring |
+| ARMHiCar | - | 73KB | Huawei HiCar support |
+| ARMandroid_Mirror | - | 64KB | Android mirroring |
 | bluetoothDaemon | 173KB | 409KB | Bluetooth management |
 | mdnsd | - | 141KB | mDNS/Bonjour service (378KB runtime BSS) |
-| boxNetworkService | 45KB | - | Network management (not UPX packed) |
+| boxNetworkService | 45KB | - | Network management (custom LZMA packed, magic `0x55225522`) |
 | riddleBoxCfg | 30KB | 50KB | Configuration CLI |
 | server.cgi | - | 74KB | Web UI backend |
 | upload.cgi | - | 53KB | File upload handler |

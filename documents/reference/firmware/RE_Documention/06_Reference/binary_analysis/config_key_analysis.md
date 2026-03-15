@@ -154,10 +154,6 @@ It receives configuration via env vars, CLI args, and D-Bus from ARMadb-driver.
 | 29 | AndroidAutoWidth | 0 | 0-4096 | `androidAutoSizeW` | AA video width → boot script |
 | 30 | AndroidAutoHeight | 0 | 0-4096 | `androidAutoSizeH` | AA video height → boot script |
 | 64 | ImprovedFluency | 0 | 0-1 | `improvedFluency` | Smoothing (server.cgi only, never read at runtime) |
-| 21 | MouseMode | 1 | 0-1 | `mouseMode` | Touch input mode (server.cgi only) |
-| 32 | KnobMode | 0 | 0-1 | — | Rotary knob mapping (server.cgi only) |
-| 56 | autoDisplay | 1 | 0-2 | `autoDisplay` | Auto-switch to adapter (server.cgi only) |
-| 11 | DisplaySize | 0 | 0-3 | `displaySize` | CarPlay display size (server.cgi only) |
 | S7 | CustomId | "" | buf 32 | — | OEM identifier (CGI only) |
 | A | LangList | [] | array | — | UI languages JSON array |
 
@@ -177,6 +173,10 @@ It receives configuration via env vars, CLI args, and D-Bus from ARMadb-driver.
 | S15 | BrandServiceURL | "" | buf 32 | Brand cloud URL (vestigial) |
 | S16 | BoxIp | "" | buf 16 | Config IP (vestigial, hardcoded) |
 | S22 | oemName | "" | buf 64 | OEM identifier (vestigial) |
+| 21 | MouseMode | 1 | 0-1 | Touch input mode (server.cgi only, zero runtime xrefs) |
+| 32 | KnobMode | 0 | 0-1 | Rotary knob mapping (server.cgi only, zero runtime xrefs) |
+| 56 | autoDisplay | 1 | 0-2 | Auto-switch to adapter (server.cgi only, zero runtime xrefs) |
+| 11 | DisplaySize | 0 | 0-3 | CarPlay display size (server.cgi only, zero runtime xrefs) |
 
 ## Video / H.264
 

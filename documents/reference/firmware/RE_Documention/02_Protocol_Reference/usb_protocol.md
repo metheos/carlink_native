@@ -72,7 +72,7 @@ Write path at `fcn.00064630` normalizes BB magic back to AA after decryption.
 | 5 | 0x05 | Touch | OUT | 16 | Single touch input |
 | 6 | 0x06 | VideoData | IN | Variable | H.264 video frame (36-byte header) |
 | 7 | 0x07 | AudioData | BOTH | Variable | Audio data or commands (see below) |
-| 23 | 0x17 | MultiTouch | OUT | Variable | Multi-touch (1-10 points) |
+| 23 | 0x17 | MultiTouch | OUT | Variable | Multi-touch (1-5 points, 16 bytes/point) |
 | 44 | 0x2C | NaviVideoData | IN | Variable | Navigation video (36-byte header, iOS 13+) |
 
 **Video Header Sizes:**
@@ -102,6 +102,32 @@ See `video_protocol.md` for detailed header structures and host implementation g
 | 22 | 0x16 | CameraFrame | IN | Variable | Camera/reverse video input (Binary: CMD_CAMERA_FRAME) |
 
 **⚠️ CORRECTION (Feb 2026):** Type 0x16 was previously documented as "AudioTransfer". Binary analysis confirms it is `CMD_CAMERA_FRAME` (camera input). Audio transfer is Command ID 22 sent via type 0x08, not a separate message type.
+
+### Camera Frame (0x16) — Bidirectional (Payload Structure)
+
+First 4 bytes of payload = int32 sub-command:
+
+| Sub-cmd | Name | Direction | Payload After Sub-cmd |
+|---------|------|-----------|----------------------|
+| 1 | UPLOAD_INFO | Host → Adapter | N × 20-byte CameraFrameInfo descriptors |
+| 2 | SET_CONFIG | Adapter → Host | 20-byte CameraFrameInfo (adapter's chosen resolution) |
+| 3 | OPEN | Adapter → Host | (none) |
+| 4 | CLOSE | Adapter → Host | (none) |
+| 5 | H264_DATA | Host → Adapter | Raw H.264 frame bytes |
+
+**CameraFrameInfo (20 bytes, little-endian):**
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 4 | width |
+| 4 | 4 | height |
+| 8 | 4 | minFps |
+| 12 | 4 | maxFps |
+| 16 | 4 | format (1=H.264) |
+
+Flow: Host sends sub-cmd 1 (supported resolutions) → Adapter replies sub-cmd 2 (selected resolution) → Adapter sends sub-cmd 3 (open) → Host streams sub-cmd 5 (H.264 data) → Adapter sends sub-cmd 4 (close).
+
+> **Source:** PhoneMirrorBox `CameraFrameInfo.java`, `CameraManager.java`, `BoxProtocol.java:2101-2129`. Firmware strings: `CMD_CAMERA_FRAME`, `Box Process Camera Cmd: %d`, `USB Camera Plug In/Out`. Dispatch at `0x17c06/0x17cd8`.
 
 ### Dual-Purpose Message Types (Binary Verified Feb 2026)
 
@@ -594,6 +620,7 @@ For the complete per-ID command listing, see `command_ids.md`. For per-command b
 | `btFormat` | int | Bluetooth format | - |
 | `boxName` | string | Device display name | `CustomBoxName` |
 | `iAP2TransMode` | int | iAP2 transport mode | `iAP2TransMode` |
+| `UseBTPhone` | int | 0=disabled, 1=enabled | `UseBTPhone` (key 12) | Route phone calls via BT HFP directly (bypassing adapter audio pipeline) |
 
 **Branding / OEM:**
 
@@ -1181,6 +1208,131 @@ Time      Dir  Type                   Payload Summary
 
 ---
 
+## AutoKit Initialization Sequence (Decompiled Mar 2026)
+
+> **Source:** AutoKit v2025.03.19.1126 decompilation (`BoxInterface/f.java`). AutoKit is the sole authority for this sequence — it has NOT been tested with carlink_native. The firmware does not validate the 0xA0 payload or require encryption (0xF0) for normal operation.
+
+AutoKit's initialization differs from the carlink_native capture above by sending app identification (0xA0) and enabling USB transport encryption (0xF0) before the Open message:
+
+```
+Step  Method   Type   Payload                         Purpose
+─────────────────────────────────────────────────────────────────
+1     H0()     0xA0   PID JSON (minimal)              App identification (first pass)
+2     V0()     0xF0   4-byte random seed (> 0)        Enable USB transport encryption
+      ← wait         Adapter ACKs with empty 0xF0    Encryption now active
+3     P0()     0x99   /tmp/screen_dpi                 DPI configuration
+4     L0()     0x99   /tmp/night_mode, hand_drive     Night/drive mode files
+5     X0()     0x01   Open (resolution, fps, format)  Session handshake
+      ← wait         Adapter echoes Open + info      Session established
+6     q0()     0x19   BoxSettings JSON                Full configuration
+7     i0()     0xA0   AppInfo JSON (full)             App identification (second pass)
+8     ...      ...    Audio, BT, other config         Remaining setup
+```
+
+**All messages after Step 2 (0xF0 ACK) are encrypted** with magic `0x55BB55BB`, except exempt types (0x06, 0x07, 0x2A, 0x2C).
+
+### CMD_APP_INFO (0xA0) Payload Structure
+
+```json
+{
+  "version": "2025.03.19.1126",
+  "code": 37,
+  "lang": "<locale>",
+  "uuid": "<device-uuid>",
+  "size": "<width>x<height>",
+  "model": "<Build.MODEL>",
+  "platform": "<ro.board.platform>",
+  "android": "<Build.VERSION.RELEASE>(<SDK_INT>)",
+  "huid": "<hardware-uuid>"
+}
+```
+
+> **Note:** The firmware has no dispatch handler for 0xA0 — it falls through to `"Unkown_RiddleHUDComand_"` logging. The message is effectively ignored by current firmware (2025.10.15). It may be consumed by newer firmware versions or used for telemetry/analytics on adapters with cloud connectivity.
+
+> **Source:** AutoKit `BoxInterface/f.java` methods `i0()` (line 2144) and `j0()` (line 2166). JSON fields verified in decompiled source.
+
+### Encryption Purpose: Android Mirror Asset Deployment (Decompiled Mar 2026)
+
+> **Source:** AutoKit `BoxInterface/f.java` lines 774-783, 1962-1968, 2129-2137. NOT implemented or tested in carlink_native. AutoKit is sole authority.
+
+USB transport encryption (0xF0) exists primarily to gate **Android Mirror** (workMode=3) asset deployment. After encryption is confirmed, AutoKit uploads proprietary mirroring software to the adapter:
+
+**Firmware ≥ 2022:** Single archive `other_link.hwfs` (1.1MB) uploaded via SendFile (0x99) to `/tmp/other_link.hwfs`. The `.hwfs` extension triggers the firmware's module upgrade path: `hwfsTools` (`/usr/sbin/hwfsTools`, ARM ELF) decrypts the proprietary container to a standard `.tar.gz`, then `tar -xvf` extracts the mirroring assets to `/tmp/update/` for installation. This is the same `.hwfs` → `hwfsTools` → `tar.gz` pipeline used for OTA firmware updates.
+
+**Older firmware:** Individual assets uploaded separately:
+
+**Verified contents of `other_link.hwfs`** (decrypted on adapter via `hwfsTools`, extracted Mar 2026):
+
+**Android phone mirroring stack:**
+
+| Asset | Size | Purpose |
+|-------|------|---------|
+| `mirrorcoper.apk` | 29KB | Minimal Android service app ("Phonemirror") — requests permissions, launches `someservice`. Signed by "lijian" (2016). Installed on phone via ADB. |
+| `HWTouch.dex` | 12KB | Touch event injection DEX loaded on phone via ADB |
+| `mirror.bgd` | 268KB | Nested binary container (header `06 09 01`) — contains `HWMirror.jar` (main Java mirroring logic) + duplicate libs |
+
+**Screen capture (per Android API level):**
+
+| Assets | Sizes | Purpose |
+|--------|-------|---------|
+| `libscreencap40.so` | 22KB | Android 4.0 framebuffer capture |
+| `libscreencap41.so`, `43.so` | 30-34KB | Android 4.1, 4.3 |
+| `libscreencap422.so`, `442.so` | 34KB | Android 4.2.2, 4.4.2 (sub-version specific) |
+| `libscreencap50.so`, `50_x86.so` | 83/112KB | Android 5.0 (ARM + x86) |
+| `libscreencap60.so` – `80.so` | 79KB each | Android 6.0–8.0 |
+| `libscreencap90.so` | 129KB | Android 9.0 |
+| `libscreencap100.so` | 133KB | Android 10.0 |
+
+**Video codec:**
+
+| Asset | Size | Purpose |
+|-------|------|---------|
+| `libby265n.so` | 317KB | ARM H.265 video encoder |
+| `libby265n_x86.so` | 586KB | x86 H.265 video encoder |
+
+**ADB authentication (NOT the adb binary):**
+
+| Asset | Size | Purpose |
+|-------|------|---------|
+| `adb` | 1.7KB | **RSA private key** (PEM format) for ADB authentication — NOT the adb binary |
+| `adb.pub` | 716B | Matching RSA public key |
+
+**libimobiledevice stack (iPhone USB communication):**
+
+| Asset | Size | Purpose |
+|-------|------|---------|
+| `libimobiledevice.so.6.0.0` | 81KB | Open-source iPhone USB protocol library |
+| `libplist.so.3.0.0` / `++.so` | 36/50KB | Apple plist parser (C and C++) |
+| `libtasn1.so.6.4.2` | 60KB | ASN.1 certificate parser |
+| `libusbmuxd.so.4.0.0` | 25KB | iPhone USB multiplexer protocol |
+
+> **Note:** libimobiledevice's presence indicates the mirroring system also supports iPhone screen mirroring (iOSMirror, workMode=4) — not just Android.
+
+**Loader binaries:**
+
+| Asset | Size | Purpose |
+|-------|------|---------|
+| `helloworld0` | 9.4KB | ARM Android ELF — calls `dlopen("libby265n.so")` then `doMain()`. Launcher, no crypto. |
+| `helloworld1` | 9.4KB | ARM shared object — similar loader |
+| `helloworld2` | 5.3KB | x86 shared object — similar loader |
+
+**Android Mirror data flow:**
+```
+Phone screen → mirrorcoper.apk → libscreencap*.so → libby265n.so (H.265)
+    → adapter (ARMandroid_Mirror daemon) → USB type 0x06 → head unit
+
+Head unit touch → adapter → ADB (authenticated via bundled RSA key)
+    → HWTouch.dex → phone input injection
+```
+
+**Without encryption (firmware ≥ 2024.07.08):** AutoKit logs `"box not support crypt!!!"`, sets unauthorized flag, triggers error 123. Android Mirror is blocked.
+
+**CarPlay and Android Auto are NOT affected** — they do not require encryption. CarPlay uses the adapter's built-in AirPlay/iAP2 stack; Android Auto uses `ARMAndroidAuto`. Neither path involves asset upload.
+
+> **Security analysis:** The `.hwfs` container is encrypted by `hwfsTools` to protect assets in transit and at rest in the APK. However, after deployment: `mirrorcoper.apk` is installed on the user's phone (extractable via `adb pull`), native libraries are written to `/tmp/` on the adapter (root-accessible writable filesystem), and the ADB RSA private key is stored in plaintext. The encryption serves primarily as a **compatibility gate** — ensuring only Carlinkit-branded host apps can activate Android Mirror — rather than genuine asset protection. The phone must also have **USB debugging enabled** and must accept the bundled ADB key, adding a user-consent step that somewhat mitigates the ADB access concern.
+
+---
+
 ## Navigation Video Setup (iOS 13+)
 
 ### What Is Required (Testing Verified Feb 2026)
@@ -1261,7 +1413,7 @@ Full operational details for each type follow the summary table.
 | 30 | 0x1E | Bluetooth_Search (IN) / BroadCastRemoteCxCy (OUT) | **DUAL** | IN: unused / OUT: 28B (resolution) | ACTIVE outbound, NO-OP inbound |
 | 119 | 0x77 | FactorySetting | BOTH | A→H: empty (idle notification) / H→A: 4B (factory reset) | ACTIVE — dual-purpose |
 | 136 | 0x88 | CMD_DEBUG_TEST | H→A | 4B (subcommand) | ACTIVE — log capture/retrieval |
-| 160 | 0xA0 | CMD_APP_INFO | H→A | Variable JSON | **HOST-ONLY** — not in firmware dispatch table. AutoKit sends app version, device model, platform, uuid, screen size as JSON. Sent as first init message (before Open). |
+| 160 | 0xA0 | CMD_APP_INFO | H→A | Variable JSON | **HOST-ONLY** — not in firmware dispatch table. AutoKit sends app identification JSON. Sent twice: once before Open (PID only), once after Open (full details). See AutoKit Init Sequence below. |
 | 161 | 0xA1 | ICCOA Open/Info | A→H | 12-24B | ACTIVE — ICCOA protocol only (not CarPlay/AA) |
 | 162 | 0xA2 | CMD_BOX_CONFIG | H→A | Variable JSON | **HOST-ONLY** — not in firmware dispatch table. AutoKit sends `{"DayNightMode": 2, "WiFiChannel": <int>}` as separate config channel distinct from BoxSettings (0x19). |
 | 205 | 0xCD | HUDComand_A_Reboot | H→A | None | ACTIVE — full system reboot |
@@ -1355,7 +1507,9 @@ Host receives: `[magic:55AA55AA][len:00000000][type:F0000000][check:0FFFFFFF]`
 Log: `"setUSB from HUCMD_ENABLE_CRYPT: %d\n"`
 
 **Step 5 — All subsequent messages are encrypted/decrypted:**
-The global at `0x11f408` is read by `fcn.00017b74` (4 read sites: `0x1DDBC`, `0x17B96`, `0x17D4A`, `0x18618`). When `> 0`, all messages with payload pass through AES-128-CBC, EXCEPT exempt types.
+The global at `0x11f408` is read by `fcn.00017b74` (4 read sites: `0x1DDBC`, `0x17B96`, `0x17D4A`, `0x18618`). When `> 0`, all messages with payload pass through AES encryption, EXCEPT exempt types.
+
+> **Cipher mode discrepancy:** Firmware binary calls `AES_cbc_encrypt` (OpenSSL CBC), but AutoKit (v2025.03.19.1126) uses `AES/CFB/NoPadding` (Java CFB). Both use the same key derivation and IV construction. AutoKit is the sole working reference for encryption — carlink_native does not implement encryption. See `../03_Security_Analysis/crypto_stack.md` § CBC vs CFB Discrepancy for analysis.
 
 #### State Machine
 
@@ -1373,7 +1527,7 @@ The global at `0x11f408` is read by `fcn.00017b74` (4 read sites: `0x1DDBC`, `0x
 │  Adapter stores crypto_mode to global 0x11f408      │
 │       ↓                                             │
 │  ENCRYPTION ON (global > 0)                         │
-│  Non-exempt messages: magic=0x55BB55BB + AES-CBC    │
+│  Non-exempt messages: magic=0x55BB55BB + AES encrypt │
 │  Exempt types (0x06,0x07,0x2A,0x2C): still 55AA    │
 │                                                     │
 │  ⚠ CANNOT be disabled mid-session                   │
@@ -1390,6 +1544,8 @@ The global at `0x11f408` is read by `fcn.00017b74` (4 read sites: `0x1DDBC`, `0x
 derived_key[i] = base_key[(i + crypto_mode) % 16]
 ```
 Only 16 possible key rotations for a known hardcoded key — **obfuscation, not security**.
+
+> **AutoKit confirmation (Mar 2026):** AutoKit `BoxInterface/f.java` line 2519 implements identical derivation: `bArr[i3] = (byte) "SkBRDy3gmrw1ieH0".charAt((this.n + i3) % 16)` where `this.n` = crypto_mode seed. IV construction also matches (seed bytes scattered at offsets 1, 4, 9, 12). AutoKit uses `random.nextInt(Integer.MAX_VALUE)` for the seed, ensuring `> 0`.
 
 **IV construction:** 16 zero bytes, then scatter `crypto_mode` bytes:
 ```
@@ -1433,6 +1589,23 @@ iv[12] = (crypto_mode >> 24) & 0xFF
 | Disable mechanism | None (one-way enable) | Session must restart |
 | Shared across all adapters | Yes — same hardcoded key | CRITICAL — one key for all units |
 
+### MultiTouch (0x17) — Host → Adapter (Payload Structure)
+
+Variable-length payload. Each touch point is 16 bytes (little-endian), no count header — adapter infers count from `dataSize / 16`.
+
+| Offset | Size | Type | Field | Values |
+|--------|------|------|-------|--------|
+| +0 | 4 | float | xPercent | 0.0–1.0 (normalized X) |
+| +4 | 4 | float | yPercent | 0.0–1.0 (normalized Y) |
+| +8 | 4 | int32 | action | 0=UP, 1=DOWN, 2=MOVE |
+| +12 | 4 | int32 | pointerId | 0–4 (finger index) |
+
+- **Max 5 simultaneous points** (PMB/AutoKit arrays capped at 5; firmware accepts variable length)
+- Used for CarPlay multi-touch (pinch/zoom). HiCar is the only mode where PMB enables multi-touch by default.
+- Distinct from single-touch CMD (0x05) which uses int pixel coords or 0–10000 normalized ints.
+
+> **Source:** PhoneMirrorBox `BoxMultiTouch.java`, AutoKit `e.java`, carlink_native `MessageSerializer.kt` — all three agree on field order and values. Firmware dispatch at `0x17c0a`/`0x17cdc` (binary verified Feb 2026).
+
 ### CMD_CARPLAY_MODE_CHANGE (0x0B) — Operational Details (Binary Verified Feb 2026)
 
 **Direction:** Adapter → Host ONLY (inbound from host is logged as unsupported and dropped)
@@ -1455,6 +1628,26 @@ iv[12] = (crypto_mode >> 24) & 0xFF
 3. `StartPhoneLink` at `0x1cc00` — sends with 0x2C-byte payload containing linkType/transportType
 
 **What the host should do:** Parse the mode byte. On mode 0→2 (idle→CarPlay): prepare video/audio pipelines. On mode 2→0 (CarPlay→idle): tear down pipelines, prepare for disconnect. On mode change to 1 (AirPlay): switch to audio-only routing.
+
+#### StModeChange Payload (28 bytes)
+
+When the adapter sends a 28-byte payload via 0x0B, it contains the CarPlay session mode state:
+
+| Offset | Size | Field | Default | Values |
+|--------|------|-------|---------|--------|
+| 0x00 | 4 | handDriveMode | 0 | 0=left, 1=right |
+| 0x04 | 4 | nightMode | 0 | 0=day, 1=night |
+| 0x08 | 4 | screenMode | 1 | 0=n/a, 1=take, 2=untake, 3=borrow, 4=unborrow |
+| 0x0C | 4 | audioMode | 2 | 0=n/a, 1=take, 2=untake, 3=borrow, 4=unborrow |
+| 0x10 | 4 | phoneMode | 0 | -1=not in phone, 0=n/a, 1=in phone |
+| 0x14 | 4 | speechMode | 0 | -1=not in speech, 0=n/a, 1=speaking, 2=recognizing |
+| 0x18 | 4 | naviMode | 0 | -1=not in navi, 0=n/a, 1=in navi |
+
+All fields int32 little-endian. The adapter guards on exact 28-byte size before parsing.
+
+> **Note:** 0x0B carries different payload sizes depending on the trigger path. The OniPhoneWorkModeChanged variant (documented above) uses a different structure. Parse based on `dataSize`.
+
+> **Source:** PhoneMirrorBox `BoxProtocol.java:3019-3070`, AutoKit `f.java:349-384` — identical struct in both. Firmware string `CMD_CARPLAY_MODE_CHANGE` at dispatch `0x17bda/0x17cac`.
 
 ### CMD_CARPLAY_AirPlayModeChanges (0x10) — Operational Details (Binary Verified Feb 2026)
 
@@ -1935,9 +2128,9 @@ Cross-referencing firmware binary analysis with the CarLink Native app code (`Ca
 
 | Gap | Severity | Details |
 |-----|----------|---------|
-| **Phase 0 not detected** | HIGH | The app does not check for Phase value 0. Firmware kills all phone-link processes on Phase 0 — this is the definitive session termination signal. The app should transition to DISCONNECTED. |
+| ~~**Phase 0 not detected**~~ | ~~HIGH~~ FIXED | ~~The app does not check for Phase value 0.~~ **Corrected Mar 2026:** CarlinkManager.kt handles Phase 0 in multiple scenarios (negotiation rejection, streaming teardown, normal disconnect). |
 | **NaviFocus 508 not echoed** | LOW | Adapter sends cmd 508 (RequestNaviScreenFocus). The `pi-carplay` reference implementation echoes 508 back, but **live testing could not conclusively confirm this is required**. Navigation video activation is primarily driven by `naviScreenInfo` in BoxSettings. Echoing 508 back is recommended as a low-cost precaution. |
-| **AudioCmd 14 not handled** | LOW | `kRiddleAudioSignal_PHONECALL_Incoming` (audio command 14) signals an incoming call ring, distinct from PHONECALL_START. Missing handler means incoming ring audio may not be routed correctly. |
+| ~~**AudioCmd 14 not handled**~~ | ~~LOW~~ FIXED | ~~Missing handler.~~ **Corrected Mar 2026:** CarlinkManager.kt handles `AUDIO_INCOMING_CALL_INIT` (command 14) for incoming call ring routing. |
 | **0x0F/0x15 defined but never sent** | INFO | `DISCONNECT_PHONE` (0x0F) and `CLOSE_DONGLE` (0x15) are defined in MessageTypes but are H→A only commands. The app should never receive them. They can be removed from the inbound parser. |
 
 ---

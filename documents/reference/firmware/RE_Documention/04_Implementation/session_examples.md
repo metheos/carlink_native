@@ -59,9 +59,9 @@ This document contains real captured session examples showing the exact packet s
 | 21 | 1268ms | OUT | 25 | BoxSettings | naviScreenInfo config |
 | 22 | 1395ms | OUT | 8 | Command | cmd=1000 (wifiListGetCmd) |
 | 23 | 1522ms | OUT | 8 | Command | cmd=7 (mic car) |
-| 24 | 1648ms | OUT | 8 | Command | cmd=23 (audioTransfer on) |
+| 24 | 1648ms | OUT | 8 | Command | cmd=23 (UseBoxTransAudio) |
 | 25 | 2380ms | OUT | 8 | Command | cmd=1002 (wifiConnect) |
-| 26 | 2411ms | IN | 8 | Command | cmd=1003 (wifiConnectSuccess) |
+| 26 | 2411ms | IN | 8 | Command | cmd=1003 (ScanningDevice) |
 | 27 | 2500ms | IN | 35 | PeerBluetoothAddress | Phone BT connecting |
 | 28 | 3782ms | OUT | 170 | HeartBeat | Keep-alive |
 | 29 | 4270ms | IN | 37 | UiHidePeerInfo | - |
@@ -171,9 +171,9 @@ Navigation video is activated by sending `naviScreenInfo` in BoxSettings. `Advan
 | 21 | 1267ms | OUT | 25 | BoxSettings | naviScreenInfo |
 | 22 | 1394ms | OUT | 8 | Command | cmd=1000 (wifiListGetCmd) |
 | 23 | 1521ms | OUT | 8 | Command | cmd=7 (mic car) |
-| 24 | 1647ms | OUT | 8 | Command | cmd=23 (audioTransfer on) |
+| 24 | 1647ms | OUT | 8 | Command | cmd=23 (UseBoxTransAudio) |
 | 25 | 2378ms | OUT | 8 | Command | cmd=1002 (wifiConnect) |
-| 26 | 2410ms | IN | 8 | Command | cmd=1003 (wifiConnectSuccess) |
+| 26 | 2410ms | IN | 8 | Command | cmd=1003 (ScanningDevice) |
 
 ### Waiting for Phone (2-37 seconds)
 
@@ -232,7 +232,7 @@ During this phase, the host sends HeartBeat every ~2 seconds while waiting for p
 |-----|------|-----|---------|---------|
 | 52 | 38904ms | IN | 505 | ReleaseAudioFocus - adapter releasing |
 | 53 | 38988ms | IN | 500 | RequestVideoFocus - adapter requesting |
-| 763 | 69675ms | IN | 19 | micFocusRequest |
+| 763 | 69675ms | IN | 19 | StopGNSSReport |
 
 **Adapter TTY correlation:**
 ```

@@ -179,7 +179,7 @@ The `infos` command returns comprehensive adapter information:
     "ScreenDPI": 0,
     "Udisk": 0
   },
-  // NOTE: Settings object only contains 13 keys!
+  // NOTE: Settings object only contains 14 keys (including Udisk)!
   // Many settings (MicType, BtAudio, BackgroundMode, HudGPSSwitch,
   // UDiskPassThrough, FastConnect, ImprovedFluency (DEAD KEY - unimplemented), KnobMode, MouseMode,
   // AdvancedFeatures, CustomCarLogo) are NOT returned.

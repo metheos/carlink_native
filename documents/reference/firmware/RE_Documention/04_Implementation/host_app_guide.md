@@ -102,9 +102,10 @@ A host application communicates with the CPC200-CCPA adapter via USB to:
 ### 1. Adapter Discovery
 
 ```
-1. Scan USB devices for:
-   - VID: 0x1314
-   - PID: 0x1521
+1. Scan USB devices for any of:
+   - VID: 0x1314, PID: 0x1520 (primary)
+   - VID: 0x1314, PID: 0x1521 (alternate)
+   - VID: 0x08E4, PID: 0x01C0 (alternate)
 
 2. Open USB interface (bulk transfer)
 
@@ -365,7 +366,7 @@ var micDecodeType = 5  // Default to 16kHz, but use adapter's value
 // When INPUT_START/PHONECALL_START received with audio command
 fun handleAudioCommand(decodeType: Int, cmd: Byte) {
     when (cmd) {
-        0x04 -> {  // PHONECALL_START
+        0x04 -> {  // PHONECALL_START (note: audio_protocol.md labels byte 5 as PHONECALL_START using capture-derived names; carlink_native enum maps this to id=4 — both refer to the same active phone call signal)
             micDecodeType = decodeType  // Use adapter's requested format
             startMicCapture(sampleRate = if (decodeType == 3) 8000 else 16000)
         }
@@ -392,6 +393,8 @@ fun startMicCapture(sampleRate: Int) {
 - `decodeType=5` → 16000 Hz (wideband)
 - Other sample rates will cause WebRTC initialization failure on the adapter
 
+> **Manufacturer reference (PhoneMirrorBox r5889):** The reference app adds a mode-specific `Thread.sleep()` before starting mic capture: 500ms for CarPlay (avoids recording Siri's activation chime), 100ms for Android Auto. This is an **app-level implementation choice**, not a protocol requirement from the adapter. It is separate from the per-platform hardware latency compensation documented in the table below.
+
 ---
 
 ## Touch Input
@@ -399,26 +402,32 @@ fun startMicCapture(sampleRate: Int) {
 ### Sending Touch Events
 
 ```kotlin
+// Single-touch (0x05) — CarPlay uses action codes 14/15/16, coords as 0-10000 ints
 fun sendTouch(action: Int, x: Float, y: Float) {
-    val payload = ByteBuffer.allocate(16)
-        .putInt(action)      // 0=Down, 1=Move, 2=Up
-        .putFloat(x / screenWidth)   // Normalized 0.0-1.0
-        .putFloat(y / screenHeight)  // Normalized 0.0-1.0
-        .putInt(0)           // Flags
+    val actionCode = when (action) {
+        0 -> 14  // Down
+        1 -> 15  // Move
+        2 -> 16  // Up
+        else -> 15
+    }
+    val payload = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN)
+        .putInt(actionCode)                          // 14=Down, 15=Move, 16=Up
+        .putInt((x / screenWidth * 10000).toInt())   // 0-10000 normalized int
+        .putInt((y / screenHeight * 10000).toInt())  // 0-10000 normalized int
+        .putInt(0)                                   // Flags (encoderType | offScreen<<16)
 
     send(Touch: 0x05, payload)
 }
 
-// For multi-touch (0x17)
+// Multi-touch (0x17) — NO count header, adapter infers from dataSize/16
 fun sendMultiTouch(points: List<TouchPoint>) {
-    val payload = ByteBuffer.allocate(4 + points.size * 16)
-        .putInt(points.size)
+    val payload = ByteBuffer.allocate(points.size * 16).order(ByteOrder.LITTLE_ENDIAN)
 
     for (point in points) {
-        payload.putInt(point.action)
-        payload.putFloat(point.x)
-        payload.putFloat(point.y)
-        payload.putInt(point.id)
+        payload.putFloat(point.x)     // 0.0-1.0 normalized float
+        payload.putFloat(point.y)     // 0.0-1.0 normalized float
+        payload.putInt(point.action)  // 0=Up, 1=Down, 2=Move
+        payload.putInt(point.id)      // 0-4 finger index
     }
 
     send(MultiTouch: 0x17, payload)
@@ -648,7 +657,7 @@ Include `naviScreenInfo` in BoxSettings to activate navigation video (type 0x2C)
    if (msg_type == 0x2C) {
        width = payload[0:4]      // e.g., 1200
        height = payload[4:8]     // e.g., 500
-       unknown1 = payload[8:12]  // Always 1 (purpose unknown, NOT frame type)
+       encoderState = payload[8:12]  // EncoderState — typically 1 for nav video (varies for main video)
        pts = payload[12:16]      // Presentation timestamp
        flags = payload[16:20]    // Usually 0
        h264_data = payload[20:]

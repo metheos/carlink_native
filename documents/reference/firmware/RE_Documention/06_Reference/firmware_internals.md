@@ -10,7 +10,7 @@
 
 **[Hardware]** The CPC200-CCPA operates as an intelligent protocol bridge with severe hardware constraints. See `01_Firmware_Architecture/hardware_platform.md` for complete hardware specifications and resource constraints.
 
-**Design Philosophy:** "Smart Interface, Dumb Processing" - the adapter handles protocol translation and format conversion, delegating sophisticated processing (WebRTC, noise cancellation) to the host application.
+**Design Philosophy:** "Smart Interface, Targeted Processing" — the adapter handles protocol translation, format conversion, and microphone audio processing (WebRTC AGC, AECM, NS at `0x2dfa2`). Video is passed through without decode/transcode. H.264 decoding and rendering policy are delegated to the host application.
 
 ---
 

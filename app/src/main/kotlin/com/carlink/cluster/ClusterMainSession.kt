@@ -30,17 +30,21 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
- * Navigation relay session for cluster display.
+ * GM AAOS cluster session — relays Trip data via NavigationManager.updateTrip().
  *
- * Templates Host may create multiple sessions from CarlinkClusterService (e.g.
- * DISPLAY_TYPE_MAIN + DISPLAY_TYPE_CLUSTER on the AAOS emulator). Only the first
- * instance (primary) owns the NavigationManager lifecycle — calling navigationStarted(),
- * updateTrip(), and navigationEnded(). Any subsequent instance is passive (returns a
- * static RelayScreen, no StateFlow observation, no NavigationManager calls) to avoid
- * competing for Templates Host's single active-navigator slot.
+ * This is the ACTIVE session returned by [CarlinkClusterService]. It works on GM AAOS
+ * because GM has an internal cluster manager (OnStarTurnByTurnManager) that consumes
+ * NavigationManager data and renders turn-by-turn on the instrument cluster. The
+ * [RelayScreen] is never visible — GM's system ignores it.
  *
- * On GM AAOS only DISPLAY_TYPE_MAIN is ever created, so the primary is always the
- * sole session. On the emulator the second session becomes a no-op.
+ * **GM-specific**: On non-GM AAOS platforms that render Screen.onGetTemplate() directly,
+ * this session would show static text instead of navigation data. See [CarlinkClusterSession]
+ * for the standard Car App Library approach needed on those platforms.
+ *
+ * Primary/secondary multiplexing handles Templates Host creating multiple sessions:
+ * - AAOS emulator: creates DISPLAY_TYPE_MAIN + DISPLAY_TYPE_CLUSTER (two sessions)
+ * - GM AAOS: creates only DISPLAY_TYPE_MAIN (one session)
+ * Only the first (primary) owns NavigationManager. Subsequent sessions are passive.
  */
 class ClusterMainSession : Session() {
     private var navigationManager: NavigationManager? = null
@@ -157,7 +161,7 @@ class ClusterMainSession : Session() {
     }
 
     /**
-     * Collect navigation state with 200ms debounce, matching CarlinkClusterSession.
+     * Collect navigation state with 200ms debounce.
      */
     private suspend fun collectNavigationState() {
         var debounceJob: Job? = null

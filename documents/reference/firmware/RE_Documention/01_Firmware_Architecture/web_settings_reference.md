@@ -200,7 +200,7 @@ if (FastConnect && mac_matches(LastConnectedDevice)) {
 | `HiCarConnectMode` | `HiCarConnectMode` | 0-1 | 0 | HiCar connection method |
 | `AndroidAutoWidth` | `AndroidAutoWidth` | 0-4096 | 0 | AA display width |
 | `AndroidAutoHeight` | `AndroidAutoHeight` | 0-4096 | 0 | AA display height |
-| `AndroidWorkMode` | `AndroidWorkMode` | 1-5 | 1 | Android connection mode |
+| `AndroidWorkMode` | `AndroidWorkMode` | 0-5 | 1 | Android connection mode (0=Idle, 1=AA, 2=CarLife, 3=Mirror, 4=HiCar, 5=ICCOA) |
 
 ---
 
@@ -250,12 +250,12 @@ if (FastConnect && mac_matches(LastConnectedDevice)) {
 
 ### Settings Returned by `infos` Command
 
-The `infos` API only returns a **limited subset** of 13 settings:
+The `infos` API only returns a **limited subset** of 14 settings:
 
 ```
 startDelay, mediaDelay, autoConn, wifi5GSwitch, wifiChannel,
 mediaSound, CallQuality, bitRate, autoPlay, backRecording,
-naviVolume, displaySize, ScreenDPI
+naviVolume, displaySize, ScreenDPI, Udisk
 ```
 
 ### Settings NOT Returned by `infos`

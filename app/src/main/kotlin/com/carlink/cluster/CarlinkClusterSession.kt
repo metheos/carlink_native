@@ -33,13 +33,24 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
- * Cluster session — observes NavigationStateManager and pushes Trip updates
- * to the Templates Host via NavigationManager.
+ * Standard Car App Library cluster session — renders NavigationTemplate directly via onGetTemplate().
  *
- * Lifecycle:
- * - Templates Host creates this session for DISPLAY_TYPE_CLUSTER
- * - Collects NavigationState flow, batches rapid updates (~200ms debounce)
- * - Calls navigationStarted()/updateTrip()/navigationEnded() on state transitions
+ * NOT currently active. CarlinkClusterService returns [ClusterMainSession] instead.
+ * However, this is NOT dead code — it is the correct implementation for non-GM AAOS platforms.
+ *
+ * Two rendering paths exist in AAOS:
+ * - **GM AAOS**: Has internal OnStarTurnByTurnManager that consumes NavigationManager.updateTrip()
+ *   data and renders it on the cluster. [ClusterMainSession] targets this path — it never renders
+ *   a Screen, just relays Trip data. Works on gminfo37.
+ * - **Standard AAOS** (Volvo, Polestar, Renesas, etc.): Templates Host renders the Screen's
+ *   onGetTemplate() directly on the cluster display. This class targets that path — its
+ *   [CarlinkClusterScreen] returns NavigationTemplate with RoutingInfo (maneuver, distance, road).
+ *
+ * TODO: Add platform-aware switch in [CarlinkClusterService]:
+ *   - GM AAOS → ClusterMainSession (NavigationManager relay)
+ *   - Other AAOS → CarlinkClusterSession (direct Screen rendering)
+ * TODO: Port primary/secondary multiplexing from [ClusterMainSession] to handle emulator
+ *   dual-session creation (DISPLAY_TYPE_MAIN + DISPLAY_TYPE_CLUSTER).
  */
 class CarlinkClusterSession : Session() {
     private var screen: CarlinkClusterScreen? = null

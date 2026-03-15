@@ -165,7 +165,7 @@ rm temp_plain.bin
 
 ## ARMimg_maker Binary Analysis
 
-> **Note:** ARMimg_maker was **removed in firmware 2025.10.15**. The binary is available from all prior firmware versions and can be re-added to custom firmware images. The on-device update flow (`update_box_ota.sh`) calls this binary for decryption, so custom firmware for 2025.10.15+ should include it.
+> **Note:** ARMimg_maker is present in firmware 2025.02 (`/usr/sbin/ARMimg_maker`, 21,056 bytes). Its presence in firmware 2025.10.15 has not been independently verified — earlier analysis claimed removal, but the binary was confirmed in 2025.02 extracted rootfs. The on-device update flow (`update_box_ota.sh`) calls this binary for decryption.
 
 | Property | Value |
 |----------|-------|

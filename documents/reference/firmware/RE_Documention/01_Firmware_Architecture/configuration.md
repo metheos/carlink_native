@@ -1162,7 +1162,7 @@ Host applications configure navigation video via BoxSettings JSON:
 |------------|------|-------------|
 | `uuid` | string | Device UUID |
 | `MFD` | string | Manufacturing date |
-| `boxType` | string | Model code (e.g., "YA") |
+| `boxType` | string | Model code (e.g., "YA") — see Box Code Taxonomy below |
 | `productType` | string | Product ID (e.g., "A15W") |
 | `OemName` | string | OEM name |
 | `hwVersion` | string | Hardware version |
@@ -1183,6 +1183,51 @@ Host applications configure navigation video via BoxSettings JSON:
 | `btMacAddr` | string | Bluetooth MAC address |
 | `btName` | string | Phone Bluetooth name |
 | `cpuTemp` | int | Adapter CPU temperature |
+
+---
+
+## Box Code Taxonomy
+
+The box code is a single-letter customer identifier sent in the Open message (`iBoxversion` field at offset 20) and stored at `/etc/box_version` on the adapter. It appears as the last character of the 18-byte SoftwareVersion string (0xCC).
+
+| Letter | Numeric | Customer / Product |
+|--------|---------|-------------------|
+| I | 0 | Invalid (unauthorized) |
+| T | 1 | TengShi (ShiTeng) |
+| Y | 2 | YunLian (AutoKit/LoadKit/FlyPlay) |
+| B | 3 | Basic/AutoCast |
+| H | 4 | HiCar dedicated (Riddle/SmartLink) |
+| D | 13 | DongRong (DrongPlay) |
+| K | 14 | SinKet |
+| J | 15 | JoyeCar |
+| S | 16 | Hello_Link |
+| G | 17 | AutoPlay_H |
+| L | 18 | Geely/Lynk&Co |
+| M | 19 | (unknown customer) |
+| P | 0xFF | Public (default/generic) |
+
+Values 5–12 are unassigned. When the adapter echoes `iBoxversion=0` in the Open response, the host marks it as unauthorized.
+
+> **Source:** PhoneMirrorBox `Config.java:239-270` (BOX_CODE_MAP), tool flavor `FirstPageExImpl.java:137-148`, `build.gradle` BOX_CODE assignments. Firmware references `/etc/box_version`, `/etc/box_version2`, `/etc/box_version3` (confirmed in binary strings).
+
+---
+
+## SoftwareVersion String Format (0xCC)
+
+The 18-byte version string format is: `YYYY.MM.DD.HHMM[V][P][C]`
+
+| Position | Meaning | Known Values |
+|----------|---------|-------------|
+| 0–14 | Date-time from `/etc/software_version` | e.g., `2025.10.15.1127` |
+| 15 (V) | Firmware variant | C=CarPlay-capable, O=Non-CarPlay (AA-only OEM) |
+| 16 (P) | Protocol support | A=Android Auto, H=HiCar |
+| 17 (C) | Customer/box code | See Box Code Taxonomy above |
+
+Example: `2025.02.25.1521CAY` → 2025-02-25 15:21 build, CarPlay+AA firmware, YunLian customer.
+
+**Important:** Some host apps (e.g., PhoneMirrorBox) append `W` when `CarPlay_SupportWifi` is received from the adapter. This `W` is **host-appended, not part of the firmware's 18-byte string**. Firmware version validation checks like `endsWith("CHPW")` test the host-extended string.
+
+> **Source:** PhoneMirrorBox `BoxProtocol.java:2172-2187`, `BoxInfo.java:124-129`, `Config.java:196` (isAuthorizedBox). Firmware `/etc/software_version` contains only the 15-char date-time; suffix chars come from adapter state.
 
 ---
 
@@ -1664,7 +1709,7 @@ The `CallQuality` Web UI setting (0=Normal, 1=Clear, 2=HD) fails to translate to
 **Testing Performed:**
 - Cycled CallQuality 0→1→2 via Web UI
 - Captured USB audio packets during phone calls
-- All captures showed decode_type=5 (16kHz), never decode_type=3 (8kHz)
+- All CarPlay captures showed decode_type=5 (16kHz), never decode_type=3 (8kHz). Note: Android Auto phone calls DO use decode_type=3 (8kHz via HFP/SCO) — see `03_Audio_Processing/microphone_processing.md` § AA Phone Call Microphone.
 - TTY logs confirmed error on every CallQuality change
 
 **Workaround:** None. Sample rate is determined by CarPlay's `audioFormat` during stream setup.

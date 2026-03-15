@@ -104,7 +104,7 @@ When an Android phone connects for Android Auto, the adapter configures it into 
 | Property | Value | Description |
 |----------|-------|-------------|
 | idVendor | 0x18d1 | Google Inc. |
-| idProduct | 0x4ee1 | AOA + ADB composite |
+| idProduct | 0x2d00 or 0x4ee1 | AOA accessory (0x2d00) or AOA+ADB composite (0x4ee1, seen with Pixel 10) |
 | Protocol | AOA 2.0 | USB Accessory Protocol |
 
 **Observed Devices (TTY log Jan 2026):**

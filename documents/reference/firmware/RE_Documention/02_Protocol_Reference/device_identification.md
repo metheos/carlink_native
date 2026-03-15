@@ -214,7 +214,7 @@ Encrypted JSON telemetry sent once during session establishment.
 | Property | Value |
 |----------|-------|
 | Algorithm | AES-128-CBC |
-| Key | `W2EC1X1NbZ58TXtn` (USB Communication Key) |
+| Key | `W2EC1X1NbZ58TXtn` (SessionToken 0xA3 key ONLY — distinct from USB protocol payload key `SkBRDy3gmrw1ieH0`) |
 | IV | First 16 bytes of Base64-decoded payload |
 | Format | Base64-encoded → AES-CBC encrypted JSON |
 

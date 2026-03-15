@@ -155,3 +155,5 @@
 [88] :: Some cleanup and static tool checks.
 [89] :: Another attempt at multiple AudioFocus for the various audio stream types For AAOS routing.
 [90] :: Android Auto Does use Adapter BT for Phone Call Audio. Specifically the microphone. Fixed so on AA sessios properly forward 8Khz instead of 16 to the adapter for proper forwarding over BT to the connected Android device. Tested using Google Meets VOIP call which appears to use the same Android services as a traditional Cellular call.
+
+[91] :: Mostly Documentation updates, 

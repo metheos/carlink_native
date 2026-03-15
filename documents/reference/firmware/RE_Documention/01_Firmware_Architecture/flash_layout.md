@@ -37,7 +37,7 @@ rootwait quiet rw
 | 0x1641e | `UPGkey: %s` | Upgrade key logging |
 | 0x1643b | `do_decrypt_decompress ret=%d dstLen=%d` | Decryption function |
 | 0x17483 | `heweiencrypt` | HeWei encryption marker |
-| 0x16484 | `Can't start, Bad Keys.` | Key validation error |
+| 0x16473 | `Can't start, Bad Keys.` | Key validation error |
 
 ### U-Boot Environment
 
@@ -51,7 +51,7 @@ norboot=echo Booting from nor flash ...;run norargs;sf probe 0;sf read 0x8080000
 ### Boot Process
 
 1. U-Boot loads from QSPI flash offset 0x0
-2. Reads kernel from flash at 0x100000 (1MB) to RAM at 0x80800000
+2. Reads kernel from flash at 0x100000 (1MB) to RAM at 0x80800000 — note: mtdparts defines kernel at 0x040000 (256KB), but U-Boot reads from 0x100000; the 768KB gap (0x40000–0x100000) likely contains an encryption header or padding
 3. Reads DTB from flash at 0x5F0000 to RAM at 0x83000000
 4. Executes `bootz 0x80800000 - 0x83000000`
 

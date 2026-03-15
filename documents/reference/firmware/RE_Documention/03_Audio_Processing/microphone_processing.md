@@ -245,7 +245,7 @@ AudioService::OnMediaStatusChange(MEDIA_STATE);
 
 ## WebRTC AECM Requirements
 
-**CRITICAL:** Microphone audio must be 16kHz in practice — the firmware's WebRTC AECM module at `0x2dfa2` accepts only 8kHz or 16kHz and rejects other rates. However, 8kHz is vestigial dead code: it exists in the binary (4 AEC call sites) but was never observed in 22+ capture sessions. The `CallQuality→VoiceQuality` firmware bug prevents configuration, and modern iPhones always negotiate 16kHz. Host apps should use 16kHz mono for all microphone audio.
+**CRITICAL:** Microphone audio must be 8kHz or 16kHz — the firmware's WebRTC AECM module at `0x2dfa2` accepts only these two rates and rejects others. 8kHz was previously thought to be vestigial (based on CarPlay-only captures). It is actively used for AA phone calls — see § AA Phone Call Microphone below. CarPlay uses 16kHz exclusively. Host apps must parse `decodeType` from the adapter's `INPUT_CONFIG` command and set mic capture rate accordingly.
 
 See `audio_formats.md` (WebRTC Audio Processing > Supported Sample Rates) for the complete binary analysis with ARM assembly evidence.
 
@@ -539,7 +539,7 @@ CPC200-CCPA implements sophisticated bidirectional audio bridge with:
 
 ## References
 
-- Source: `carlink_native/documents/reference/Firmware/firmware_microphone.md`
+- Source: Consolidated from `carlink_native/documents/reference/Firmware/` research (Jan 2026)
 - Binary analysis: `ARMadb-driver_unpacked`, `ARMiPhoneIAP2` (Jan 2026)
 - Autokit decompiled: `BoxInterface/a.java` (audio dispatch, INPUT_CONFIG handler lines 696-702), `BoxInterface/f.java` (mic send thread, packet format lines 155-175)
 - Live captures: 2026-03-15 Autokit + carlink_native VOIP sessions on AAOS emulator + CPC200-CCPA + Pixel 10 wireless AA

@@ -10,11 +10,9 @@ import com.carlink.logging.logInfo
 /**
  * Headless CarAppService for cluster navigation display only.
  *
- * Always returns [ClusterMainSession] regardless of displayType. The first session
- * created becomes the primary (owns NavigationManager); any subsequent session is
- * passive. This matches GM AAOS behavior where only DISPLAY_TYPE_MAIN is created,
- * and avoids the dual-session thrashing on the AAOS emulator where Templates Host
- * creates both DISPLAY_TYPE_MAIN and DISPLAY_TYPE_CLUSTER.
+ * Currently always returns [ClusterMainSession] (GM AAOS path — NavigationManager relay).
+ * For non-GM AAOS platforms, [CarlinkClusterSession] (direct Screen rendering) should be
+ * returned instead. TODO: Add platform-aware switch here.
  *
  * MainActivity remains the sole LAUNCHER and owns all USB/video/audio pipelines.
  * This service does NOT initialize CarlinkManager, video, audio, or USB.
