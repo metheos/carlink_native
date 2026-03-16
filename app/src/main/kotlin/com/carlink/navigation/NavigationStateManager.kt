@@ -1,5 +1,6 @@
 package com.carlink.navigation
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.SystemClock
@@ -66,6 +67,9 @@ data class NavigationState(
  * next-step fields instead of overwriting current.
  */
 object NavigationStateManager {
+    private const val CLUSTER_ICON_PROVIDER_AUTHORITY =
+        "com.google.android.apps.automotive.templates.host.ClusterIconContentProvider"
+
     private val _state = MutableStateFlow(NavigationState())
     val state: StateFlow<NavigationState> = _state.asStateFlow()
 
@@ -86,6 +90,73 @@ object NavigationStateManager {
 
     /** Content hash of the current icon to avoid redundant BitmapFactory decodes. */
     private var currentIconHash = 0
+
+    /** Null until checked; then true when the cluster icon provider can be resolved by this app. */
+    @Volatile
+    private var isClusterIconProviderAvailable: Boolean? = null
+
+    /**
+     * Resolve whether Templates Host's ClusterIconContentProvider authority is actually available
+     * to this app. Play builds cannot ship our shim with that authority, so AA bitmap icons must
+     * be disabled when the authority cannot be resolved at runtime.
+     */
+    fun initialize(context: Context) {
+        if (isClusterIconProviderAvailable != null) {
+            return
+        }
+
+        synchronized(this) {
+            if (isClusterIconProviderAvailable != null) {
+                return
+            }
+
+            val appContext = context.applicationContext
+            val providerInfo =
+                try {
+                    @Suppress("DEPRECATION")
+                    appContext.packageManager.resolveContentProvider(CLUSTER_ICON_PROVIDER_AUTHORITY, 0)
+                } catch (e: Exception) {
+                    logWarn(
+                        "[NAVI_ICON] Failed to resolve $CLUSTER_ICON_PROVIDER_AUTHORITY: ${e.message}",
+                        tag = Logger.Tags.NAVI,
+                    )
+                    null
+                }
+
+            val isAccessible =
+                providerInfo != null &&
+                    (providerInfo.packageName == appContext.packageName || providerInfo.exported)
+
+            isClusterIconProviderAvailable = isAccessible
+
+            if (isAccessible) {
+                logInfo(
+                    "[NAVI_ICON] Cluster icon provider available via ${providerInfo.packageName} " +
+                        "(exported=${providerInfo.exported}) — AA maneuver bitmaps enabled",
+                    tag = Logger.Tags.NAVI,
+                )
+            } else {
+                dropCurrentManeuverIcon()
+                logWarn(
+                    "[NAVI_ICON] Cluster icon provider unavailable — AA maneuver bitmaps disabled; " +
+                        "falling back to type-based maneuver icons",
+                    tag = Logger.Tags.NAVI,
+                )
+            }
+        }
+    }
+
+    /** True unless we have explicitly confirmed the provider is unavailable. */
+    fun canUseAaManeuverIcon(): Boolean = isClusterIconProviderAvailable != false
+
+    private fun dropCurrentManeuverIcon() {
+        val hadIcon = currentManeuverIcon != null || currentIconHash != 0
+        currentManeuverIcon = null
+        currentIconHash = 0
+        if (hadIcon) {
+            ManeuverMapper.clearCache()
+        }
+    }
 
     private fun orderTypeToCpManeuverType(orderType: Int, turnSide: Int, roundaboutExit: Int): Int =
         when (orderType) {
@@ -259,6 +330,11 @@ object NavigationStateManager {
      * @param imageData Raw PNG bytes from the adapter
      */
     fun onNaviImage(imageData: ByteArray) {
+        if (!canUseAaManeuverIcon()) {
+            dropCurrentManeuverIcon()
+            return
+        }
+
         val hash = imageData.contentHashCode()
         if (hash == currentIconHash && currentManeuverIcon != null) {
             logNavi { "[NAVI_ICON] Same icon (hash=$hash, ${imageData.size}B) — skipped decode" }
@@ -289,8 +365,6 @@ object NavigationStateManager {
         logNavi { "[NAVI] State cleared (USB disconnect or session end)" }
         _state.value = NavigationState()
         lastManeuverMs = 0
-        currentManeuverIcon = null
-        currentIconHash = 0
-        ManeuverMapper.clearCache()
+        dropCurrentManeuverIcon()
     }
 }

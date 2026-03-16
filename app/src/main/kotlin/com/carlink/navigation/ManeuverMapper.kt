@@ -284,7 +284,9 @@ object ManeuverMapper {
         turnSide: Int,
         context: Context,
     ): Maneuver {
-        val aaIcon = NavigationStateManager.currentManeuverIcon
+        val aaIcon =
+            NavigationStateManager.currentManeuverIcon
+                ?.takeIf { NavigationStateManager.canUseAaManeuverIcon() }
         val aaIconHash = aaIcon?.let { System.identityHashCode(it) } ?: 0
         val cacheKey = (cpType shl 16) or (turnSide shl 8) or (if (aaIcon != null) 1 else 0)
 
