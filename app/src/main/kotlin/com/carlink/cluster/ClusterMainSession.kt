@@ -57,7 +57,23 @@ class ClusterMainSession : Session() {
      *  before Templates Host can create the cluster session (displayType=1). */
     private var hasSeenActiveNav = false
 
+    /** Pending arrival timeout — fires navigationEnded() if adapter doesn't send NaviStatus=0
+     *  after a terminal maneuver (arrived, endOfNavigation, endOfDirections). */
+    private var arrivalTimeoutJob: Job? = null
+
     companion object {
+        /** Terminal CPManeuverType values that indicate navigation is complete. */
+        private val TERMINAL_MANEUVER_TYPES = intArrayOf(
+            10, // endOfNavigation
+            12, // arrived
+            24, // arrivedLeft
+            25, // arrivedRight
+            27, // endOfDirections
+        )
+
+        /** Grace period for adapter to send NaviStatus=0 after terminal maneuver. */
+        private const val ARRIVAL_TIMEOUT_MS = 10_000L
+
         /** First live session wins; cleared on destroy so a fresh binding chain can take over. */
         @Volatile
         private var primarySession: ClusterMainSession? = null
@@ -133,6 +149,8 @@ class ClusterMainSession : Session() {
                             "[CLUSTER_MAIN] Primary session destroyed — releasing NavigationManager ownership",
                             tag = Logger.Tags.CLUSTER,
                         )
+                        arrivalTimeoutJob?.cancel()
+                        arrivalTimeoutJob = null
                         if (isNavigating) {
                             try {
                                 navigationManager?.navigationEnded()
@@ -218,10 +236,48 @@ class ClusterMainSession : Session() {
                     throwable = e,
                 )
             }
+
+            // Arrival timeout: if maneuver is a terminal type (arrived, endOfNavigation, etc.)
+            // start a grace period. If the adapter doesn't send NaviStatus=0 within the window,
+            // end navigation ourselves. Catches firmware gap where arrival is sent without flush.
+            if (state.maneuverType in TERMINAL_MANEUVER_TYPES) {
+                if (arrivalTimeoutJob?.isActive != true) {
+                    logInfo(
+                        "[CLUSTER_MAIN] Terminal maneuver (cpType=${state.maneuverType}) — " +
+                            "starting ${ARRIVAL_TIMEOUT_MS / 1000}s arrival timeout",
+                        tag = Logger.Tags.CLUSTER,
+                    )
+                    arrivalTimeoutJob = scope?.launch {
+                        delay(ARRIVAL_TIMEOUT_MS)
+                        if (isNavigating) {
+                            logInfo(
+                                "[CLUSTER_MAIN] Arrival timeout — adapter did not send flush, ending navigation",
+                                tag = Logger.Tags.CLUSTER,
+                            )
+                            try {
+                                navManager.navigationEnded()
+                            } catch (e: Exception) {
+                                logError(
+                                    "[CLUSTER_MAIN] navigationEnded() failed (arrival timeout): ${e.message}",
+                                    tag = Logger.Tags.CLUSTER,
+                                    throwable = e,
+                                )
+                            }
+                            isNavigating = false
+                        }
+                    }
+                }
+            } else {
+                // Non-terminal maneuver — cancel any pending arrival timeout
+                arrivalTimeoutJob?.cancel()
+                arrivalTimeoutJob = null
+            }
         } else if (state.isIdle && isNavigating && hasSeenActiveNav) {
             // Only end navigation if we previously saw active nav data.
             // The initial idle state must NOT kill the binding chain.
-            logInfo("[CLUSTER_MAIN] navigationEnded() (NaviStatus=0)", tag = Logger.Tags.CLUSTER)
+            arrivalTimeoutJob?.cancel()
+            arrivalTimeoutJob = null
+            logInfo("[CLUSTER_MAIN] navigationEnded() (flush signal)", tag = Logger.Tags.CLUSTER)
             try {
                 navManager.navigationEnded()
             } catch (e: Exception) {

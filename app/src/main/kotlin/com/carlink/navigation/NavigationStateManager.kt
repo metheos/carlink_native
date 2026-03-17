@@ -1,5 +1,6 @@
 package com.carlink.navigation
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.SystemClock
@@ -72,6 +73,9 @@ object NavigationStateManager {
     /** Burst window: two maneuver messages within this threshold are current + next. */
     private const val BURST_THRESHOLD_MS = 50L
 
+    private const val CLUSTER_ICON_PROVIDER_AUTHORITY =
+        "com.google.android.apps.automotive.templates.host.ClusterIconContentProvider"
+
     /** Timestamp (elapsedRealtime) of the last maneuver-bearing message. */
     private var lastManeuverMs = 0L
 
@@ -87,10 +91,88 @@ object NavigationStateManager {
     /** Content hash of the current icon to avoid redundant BitmapFactory decodes. */
     private var currentIconHash = 0
 
-    private fun orderTypeToCpManeuverType(orderType: Int, turnSide: Int, roundaboutExit: Int): Int =
-        when (orderType) {
+    /** Null until checked; then true when the cluster icon provider can be resolved by this app. */
+    @Volatile
+    private var isClusterIconProviderAvailable: Boolean? = null
+
+    /**
+     * Resolve whether Templates Host's ClusterIconContentProvider authority is actually
+     * available to this app. Play builds cannot ship our shim with that authority, so AA
+     * bitmap icons must be disabled when the authority cannot be resolved at runtime.
+     *
+     * Called once from [com.carlink.CarlinkManager] init.
+     */
+    fun initialize(context: Context) {
+        if (isClusterIconProviderAvailable != null) return
+
+        synchronized(this) {
+            if (isClusterIconProviderAvailable != null) return
+
+            val appContext = context.applicationContext
+            val providerInfo =
+                try {
+                    @Suppress("DEPRECATION")
+                    appContext.packageManager.resolveContentProvider(CLUSTER_ICON_PROVIDER_AUTHORITY, 0)
+                } catch (e: Exception) {
+                    logWarn(
+                        "[NAVI_ICON] Failed to resolve $CLUSTER_ICON_PROVIDER_AUTHORITY: ${e.message}",
+                        tag = Logger.Tags.NAVI,
+                    )
+                    null
+                }
+
+            val isAccessible =
+                providerInfo != null &&
+                    (providerInfo.packageName == appContext.packageName || providerInfo.exported)
+
+            isClusterIconProviderAvailable = isAccessible
+
+            if (isAccessible) {
+                logInfo(
+                    "[NAVI_ICON] Cluster icon provider available via ${providerInfo?.packageName} " +
+                        "(exported=${providerInfo?.exported}) — AA maneuver bitmaps enabled",
+                    tag = Logger.Tags.NAVI,
+                )
+            } else {
+                dropCurrentManeuverIcon()
+                logWarn(
+                    "[NAVI_ICON] Cluster icon provider unavailable — AA maneuver bitmaps disabled; " +
+                        "falling back to type-based maneuver icons",
+                    tag = Logger.Tags.NAVI,
+                )
+            }
+        }
+    }
+
+    /** True unless we have explicitly confirmed the provider is unavailable. */
+    fun canUseAaManeuverIcon(): Boolean = isClusterIconProviderAvailable != false
+
+    private fun dropCurrentManeuverIcon() {
+        val hadIcon = currentManeuverIcon != null || currentIconHash != 0
+        currentManeuverIcon = null
+        currentIconHash = 0
+        if (hadIcon) {
+            ManeuverMapper.clearCache()
+        }
+    }
+
+    private fun orderTypeToCpManeuverType(orderType: Int, turnSide: Int, roundaboutExit: Int): Int {
+        // Firmware bug: the AA NaviOrderType lookup table is lossy — several roundabout
+        // maneuvers collapse to orderType=16 (STRAIGHT) or other non-roundabout types.
+        // When roundaboutExit > 0, the phone IS navigating a roundabout regardless of
+        // what orderType says. Override to the correct roundabout-exit cpType.
+        if (roundaboutExit > 0 && orderType !in intArrayOf(13, 14, 15)) {
+            return 27 + roundaboutExit.coerceIn(1, 19)
+        }
+
+        return when (orderType) {
             0  -> 5                                          // MERGE → followRoad
             1  -> 11                                         // DEPART → proceedToRoute
+            2  -> when (turnSide) {                          // DESTINATION → arrived (live: proto 19 → orderType=2)
+                1 -> 24                                      //   turnSide=1 (left) → arrivedLeft
+                2 -> 25                                      //   turnSide=2 (right) → arrivedRight
+                else -> 12                                   //   unspecified → arrived
+            }
             4  -> 3                                          // NAME_CHANGE → straight
             5  -> if (turnSide == 1) 49 else 50              // SLIGHT_TURN → slightLeft/Right
             6  -> if (turnSide == 1) 1 else 2                // TURN → left/right
@@ -111,6 +193,7 @@ object NavigationStateManager {
                 5
             }
         }
+    }
 
     /**
      * Process an incoming NaviJSON payload (incremental update).
@@ -130,9 +213,10 @@ object NavigationStateManager {
 
         val naviStatus = (payload["NaviStatus"] as? Number)?.toInt()
 
-        // Flush signal: NaviStatus=0 → clear entire state including next-step
-        if (naviStatus == 0) {
-            logInfo("[NAVI] Flush signal received (NaviStatus=0) — clearing state", tag = Logger.Tags.NAVI)
+        // Flush signal: NaviStatus=0 or 2 → clear entire state including next-step.
+        // CarPlay sends 0; Android Auto sends 2 (inactive) when navigation stops.
+        if (naviStatus == 0 || naviStatus == 2) {
+            logInfo("[NAVI] Flush signal received (NaviStatus=$naviStatus) — clearing state", tag = Logger.Tags.NAVI)
             _state.value = NavigationState()
             lastManeuverMs = 0
             return
@@ -259,6 +343,11 @@ object NavigationStateManager {
      * @param imageData Raw PNG bytes from the adapter
      */
     fun onNaviImage(imageData: ByteArray) {
+        if (!canUseAaManeuverIcon()) {
+            dropCurrentManeuverIcon()
+            return
+        }
+
         val hash = imageData.contentHashCode()
         if (hash == currentIconHash && currentManeuverIcon != null) {
             logNavi { "[NAVI_ICON] Same icon (hash=$hash, ${imageData.size}B) — skipped decode" }
@@ -289,8 +378,6 @@ object NavigationStateManager {
         logNavi { "[NAVI] State cleared (USB disconnect or session end)" }
         _state.value = NavigationState()
         lastManeuverMs = 0
-        currentManeuverIcon = null
-        currentIconHash = 0
-        ManeuverMapper.clearCache()
+        dropCurrentManeuverIcon()
     }
 }

@@ -78,6 +78,10 @@ class CarlinkManager(
     private val context: Context,
     initialConfig: AdapterConfig = AdapterConfig.DEFAULT,
 ) {
+    init {
+        NavigationStateManager.initialize(context.applicationContext)
+    }
+
     // Config can be updated when actual surface dimensions are known
     private var config: AdapterConfig = initialConfig
 

@@ -301,20 +301,6 @@ class MainActivity : ComponentActivity() {
         logInfo("[LOGGING] Debug logging: ${if (isDebugBuild) "ENABLED" else "DISABLED (release build)"}", tag = "MAIN")
     }
 
-    // TODO [CODEC_INIT_TIMING]: Test deferring codec initialization until AFTER USB permission granted.
-    //
-    // PROBLEM: GM AAOS USB permission popup causes surface destruction + recreation cycle.
-    // Current sequence: codec init → permission popup → surface destroyed → codec reset (wasted work)
-    // Proposed sequence: permission popup → granted → THEN codec init (single init at final size)
-    //
-    // CAVEAT: Mid-session USB reset would still trigger permission popup (GM AAOS doesn't
-    // remember USB permissions by design). In that case, the codec is already running and
-    // the current pause/resume lifecycle handling would still apply. This optimization
-    // only benefits initial app launch, not reconnection scenarios.
-    //
-    // Test: Move carlinkManager.initializeVideo() call to after USB permission callback.
-    // Ensure touch normalization and adapter config still receive correct dimensions.
-
     private fun initializeCarlinkManager() {
         // Get window metrics to determine USABLE area (excluding system UI)
         // Using WindowMetrics API (minSdk 32 guarantees API 30+ availability)
