@@ -234,7 +234,8 @@ object MessageParser {
 
         val mediaPayload: Map<String, Any> =
             when (mediaType) {
-                MediaType.ALBUM_COVER -> {
+                MediaType.ALBUM_COVER,
+                MediaType.ALBUM_COVER_AA -> {
                     val imageData = ByteArray(header.length - 4)
                     System.arraycopy(payload, 4, imageData, 0, imageData.size)
                     mapOf("AlbumCover" to imageData)

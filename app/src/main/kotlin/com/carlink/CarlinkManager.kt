@@ -1701,6 +1701,25 @@ class CarlinkManager(
             return
         }
 
+        // Android Auto album art arrives as a standalone MEDIA_DATA subtype 2 message (PNG).
+        // Cache it and push a metadata update so MediaSession gets the cover immediately,
+        // without waiting for the next subtype-1 JSON tick which carries no image bytes.
+        if (message.type == MediaType.ALBUM_COVER_AA) {
+            val coverBytes = message.payload["AlbumCover"] as? ByteArray
+            if (coverBytes != null) {
+                lastAlbumCover = coverBytes
+                mediaSessionManager?.updateMetadata(
+                    title = lastMediaSongName,
+                    artist = lastMediaArtistName,
+                    album = lastMediaAlbumName,
+                    appName = lastMediaAppName,
+                    albumArt = lastAlbumCover,
+                    duration = lastDuration,
+                )
+            }
+            return
+        }
+
         val payload = message.payload
 
         // Extract new song title (if present)

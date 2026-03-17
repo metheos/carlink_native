@@ -411,7 +411,8 @@ enum class MediaType(
     val id: Int,
 ) {
     DATA(1),
-    ALBUM_COVER(3),
+    ALBUM_COVER_AA(2), // Android Auto album art — PNG at offset +4 (subtype 2)
+    ALBUM_COVER(3),    // CarPlay album art — JPEG at offset +4 (subtype 3)
     NAVI_JSON(200),
     NAVI_IMAGE(201),
     UNKNOWN(-1),
