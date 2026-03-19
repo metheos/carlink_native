@@ -26,6 +26,8 @@ data class VehiclePropertyDebugState(
     val notes: List<String> = emptyList(),
     val signalLines: List<String> = emptyList(),
     val previousSignalLines: List<String> = emptyList(),
+    val ignitionStateRawValue: Int? = null,
+    val previousIgnitionStateRawValue: Int? = null,
 )
 
 @Composable
@@ -59,6 +61,8 @@ private class VehiclePropertyDebugMonitor(
     private var propertyManager: Any? = null
     private var callbackProxy: Any? = null
     private var successfulSubscriptions: Int = 0
+    private var ignitionStateRawValue: Int? = null
+    private var previousIgnitionStateRawValue: Int? = null
 
     val state = stateFlow.asStateFlow()
 
@@ -280,6 +284,14 @@ private class VehiclePropertyDebugMonitor(
             append(")")
         }
 
+        if (tracked.isIgnitionState()) {
+            val rawIgnition = value as? Int
+            if (rawIgnition != null && rawIgnition != ignitionStateRawValue) {
+                previousIgnitionStateRawValue = ignitionStateRawValue
+                ignitionStateRawValue = rawIgnition
+            }
+        }
+
         setSignalLine(tracked, areaId, description)
         publishState()
     }
@@ -387,6 +399,8 @@ private class VehiclePropertyDebugMonitor(
             previousSignalLines.clear()
             trackedById.clear()
             successfulSubscriptions = 0
+            ignitionStateRawValue = null
+            previousIgnitionStateRawValue = null
         }
         publishState()
     }
@@ -398,6 +412,8 @@ private class VehiclePropertyDebugMonitor(
                 notes = notes.toList(),
                 signalLines = signalLines.values.toList(),
                 previousSignalLines = previousSignalLines.values.toList(),
+                ignitionStateRawValue = ignitionStateRawValue,
+                previousIgnitionStateRawValue = previousIgnitionStateRawValue,
             )
         }
         stateFlow.value = snapshot
@@ -509,6 +525,8 @@ private class VehiclePropertyDebugMonitor(
         val permission: String? = null,
         val rateField: String = "SENSOR_RATE_ONCHANGE",
     ) {
+        fun isIgnitionState(): Boolean = fieldName == "IGNITION_STATE"
+
         fun key(areaId: Int): String = "$label#$areaId"
 
         fun render(

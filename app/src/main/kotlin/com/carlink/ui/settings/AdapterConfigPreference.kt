@@ -276,6 +276,9 @@ class AdapterConfigPreference private constructor(
         // Cluster navigation: true = show CarPlay turn-by-turn on instrument cluster
         private val KEY_CLUSTER_NAVIGATION = booleanPreferencesKey("cluster_navigation_enabled")
 
+        // Auto trigger: restart connection (and optionally reset cluster) on ignition transition 5 -> 4
+        private val KEY_TRIGGER_RESET_ON_VEHICLE_START = booleanPreferencesKey("trigger_reset_on_vehicle_start")
+
         // Initialization tracking
         private val KEY_HAS_COMPLETED_FIRST_INIT = booleanPreferencesKey("has_completed_first_init")
         private val KEY_LAST_INIT_VERSION_CODE = longPreferencesKey("last_init_version_code")
@@ -294,6 +297,7 @@ class AdapterConfigPreference private constructor(
         private const val SYNC_CACHE_KEY_HAND_DRIVE = "hand_drive_mode"
         private const val SYNC_CACHE_KEY_GPS_FORWARDING = "gps_forwarding"
         private const val SYNC_CACHE_KEY_CLUSTER_NAVIGATION = "cluster_navigation_enabled"
+        private const val SYNC_CACHE_KEY_TRIGGER_RESET_ON_VEHICLE_START = "trigger_reset_on_vehicle_start"
         private const val SYNC_CACHE_KEY_HAS_COMPLETED_FIRST_INIT = "has_completed_first_init"
         private const val SYNC_CACHE_KEY_LAST_INIT_VERSION_CODE = "last_init_version_code"
         private const val SYNC_CACHE_KEY_PENDING_CHANGES = "pending_changes"
@@ -613,6 +617,11 @@ class AdapterConfigPreference private constructor(
             preferences[KEY_CLUSTER_NAVIGATION] ?: false
         }
 
+    val triggerResetOnVehicleStartFlow: Flow<Boolean> =
+        dataStore.data.map { preferences ->
+            preferences[KEY_TRIGGER_RESET_ON_VEHICLE_START] ?: false
+        }
+
     /**
      * Get current cluster navigation configuration synchronously.
      */
@@ -631,6 +640,29 @@ class AdapterConfigPreference private constructor(
             logInfo("Cluster navigation preference saved: $enabled", tag = "AdapterConfig")
         } catch (e: Exception) {
             logError("Failed to save cluster navigation preference: $e", tag = "AdapterConfig")
+            throw e
+        }
+    }
+
+    /**
+     * Get ignition-transition auto-reset preference synchronously.
+     */
+    fun getTriggerResetOnVehicleStartSync(): Boolean =
+        syncCache.getBoolean(SYNC_CACHE_KEY_TRIGGER_RESET_ON_VEHICLE_START, false)
+
+    /**
+     * Set ignition-transition auto-reset preference.
+     * This is a local app setting — does NOT call addPendingChange().
+     */
+    suspend fun setTriggerResetOnVehicleStart(enabled: Boolean) {
+        try {
+            dataStore.edit { preferences ->
+                preferences[KEY_TRIGGER_RESET_ON_VEHICLE_START] = enabled
+            }
+            syncCache.edit().putBoolean(SYNC_CACHE_KEY_TRIGGER_RESET_ON_VEHICLE_START, enabled).apply()
+            logInfo("Trigger reset on vehicle start preference saved: $enabled", tag = "AdapterConfig")
+        } catch (e: Exception) {
+            logError("Failed to save trigger reset on vehicle start preference: $e", tag = "AdapterConfig")
             throw e
         }
     }
@@ -738,6 +770,7 @@ class AdapterConfigPreference private constructor(
                 preferences.remove(KEY_HAND_DRIVE)
                 preferences.remove(KEY_GPS_FORWARDING)
                 preferences.remove(KEY_CLUSTER_NAVIGATION)
+                preferences.remove(KEY_TRIGGER_RESET_ON_VEHICLE_START)
                 preferences.remove(KEY_HAS_COMPLETED_FIRST_INIT)
                 preferences.remove(KEY_LAST_INIT_VERSION_CODE)
                 preferences.remove(KEY_PENDING_CHANGES)
@@ -757,6 +790,7 @@ class AdapterConfigPreference private constructor(
                     remove(SYNC_CACHE_KEY_HAND_DRIVE)
                     remove(SYNC_CACHE_KEY_GPS_FORWARDING)
                     remove(SYNC_CACHE_KEY_CLUSTER_NAVIGATION)
+                    remove(SYNC_CACHE_KEY_TRIGGER_RESET_ON_VEHICLE_START)
                     remove(SYNC_CACHE_KEY_HAS_COMPLETED_FIRST_INIT)
                     remove(SYNC_CACHE_KEY_LAST_INIT_VERSION_CODE)
                     remove(SYNC_CACHE_KEY_PENDING_CHANGES)

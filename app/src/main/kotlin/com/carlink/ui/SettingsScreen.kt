@@ -255,7 +255,12 @@ private fun ControlTabContent(
 
     val adapterConfigPreference = remember { AdapterConfigPreference.getInstance(context) }
     var showAdapterConfigDialog by remember { mutableStateOf(false) }
-    val clusterNavigationEnabled = remember { adapterConfigPreference.getClusterNavigationSync() }
+    val clusterNavigationEnabled by adapterConfigPreference.clusterNavigationFlow.collectAsStateWithLifecycle(
+        initialValue = adapterConfigPreference.getClusterNavigationSync(),
+    )
+    val triggerResetOnVehicleStartEnabled by adapterConfigPreference.triggerResetOnVehicleStartFlow.collectAsStateWithLifecycle(
+        initialValue = adapterConfigPreference.getTriggerResetOnVehicleStartSync(),
+    )
     val vehiclePropertyDebugState = rememberVehiclePropertyDebugState()
 
     val windowInfo = LocalWindowInfo.current
@@ -421,6 +426,37 @@ private fun ControlTabContent(
                                 }
                             }
                         },
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Trigger Reset on Vehicle Start",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        FilledTonalButton(
+                            onClick = {
+                                scope.launch {
+                                    adapterConfigPreference.setTriggerResetOnVehicleStart(!triggerResetOnVehicleStartEnabled)
+                                }
+                            },
+                            enabled = !isProcessing,
+                        ) {
+                            Text(if (triggerResetOnVehicleStartEnabled) "On" else "Off")
+                        }
+                    }
+
+                    Text(
+                        text = "When On: ignition transition 5 -> 4 auto-runs Reset Connection and cluster reset (if cluster navigation is enabled).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

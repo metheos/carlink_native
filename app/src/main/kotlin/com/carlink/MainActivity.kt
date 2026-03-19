@@ -38,6 +38,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
 import com.carlink.cluster.ClusterBindingState
 import com.carlink.logging.FileLogManager
 import com.carlink.logging.LogPreset
@@ -56,12 +57,14 @@ import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.DisplayModePreference
 import com.carlink.ui.theme.CarlinkTheme
 import com.carlink.util.IconAssets
+import com.carlink.vehicle.VehicleIgnitionMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Main Activity - Entry Point for Carlink Native
@@ -78,6 +81,8 @@ class MainActivity : ComponentActivity() {
     private var carlinkManager: CarlinkManager? = null
     private var fileLogManager: FileLogManager? = null
     private var currentDisplayMode: DisplayMode = DisplayMode.SYSTEM_UI_VISIBLE
+    private var ignitionMonitor: VehicleIgnitionMonitor? = null
+    private val ignitionAutoResetInFlight = AtomicBoolean(false)
 
     // Permission launchers — chained: mic callback triggers location request
     private val locationPermissionLauncher =
@@ -159,6 +164,7 @@ class MainActivity : ComponentActivity() {
         // Initialize Carlink manager (must be AFTER immersive mode is applied)
         // so display dimensions are calculated correctly for the active mode
         initializeCarlinkManager()
+        startIgnitionAutoResetMonitor()
 
         // Request permissions if needed (location is chained after mic dialog)
         requestMicrophonePermission()
@@ -251,6 +257,9 @@ class MainActivity : ComponentActivity() {
 
         // Unregister USB detachment receiver
         unregisterUsbDetachReceiver()
+
+        ignitionMonitor?.stop()
+        ignitionMonitor = null
 
         // Release resources (null-safe in case Activity destroyed before init completed)
         carlinkManager?.release()
@@ -486,6 +495,46 @@ class MainActivity : ComponentActivity() {
         )
 
         carlinkManager = CarlinkManager(this, config)
+    }
+
+    private fun startIgnitionAutoResetMonitor() {
+        val preference = AdapterConfigPreference.getInstance(this)
+        ignitionMonitor?.stop()
+        ignitionMonitor = VehicleIgnitionMonitor(applicationContext) { previousState, currentState ->
+            if (previousState != 5 || currentState != 4) {
+                return@VehicleIgnitionMonitor
+            }
+            if (!preference.getTriggerResetOnVehicleStartSync()) {
+                return@VehicleIgnitionMonitor
+            }
+            if (!ignitionAutoResetInFlight.compareAndSet(false, true)) {
+                logInfo("[AUTO_RESET] Ignition trigger ignored - reset already in flight", tag = "MAIN")
+                return@VehicleIgnitionMonitor
+            }
+
+            val manager = carlinkManager
+            if (manager == null) {
+                ignitionAutoResetInFlight.set(false)
+                return@VehicleIgnitionMonitor
+            }
+
+            logWarn("[AUTO_RESET] Ignition transition 5->4 detected - running restart", tag = "MAIN")
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    manager.restart()
+                    if (preference.getClusterNavigationSync()) {
+                        runOnUiThread {
+                            restartClusterBinding()
+                        }
+                    }
+                } catch (e: Exception) {
+                    logWarn("[AUTO_RESET] Ignition-triggered restart failed: ${e.message}", tag = "MAIN")
+                } finally {
+                    ignitionAutoResetInFlight.set(false)
+                }
+            }
+        }
+        ignitionMonitor?.start()
     }
 
     /** Build HU_VIEWAREA_INFO (24 bytes): [screen_w, screen_h, view_w, view_h, originX, originY] */
