@@ -90,6 +90,7 @@ import com.carlink.ui.settings.DisplayModePreference
 import com.carlink.ui.settings.LogsTabContent
 import com.carlink.ui.settings.SettingsTab
 import com.carlink.ui.theme.AutomotiveDimens
+import com.carlink.vehicle.rememberVehiclePropertyDebugState
 import kotlinx.coroutines.launch
 
 /** Settings screen with NavigationRail for device control, display settings, and log management. */
@@ -255,6 +256,7 @@ private fun ControlTabContent(
     val adapterConfigPreference = remember { AdapterConfigPreference.getInstance(context) }
     var showAdapterConfigDialog by remember { mutableStateOf(false) }
     val clusterNavigationEnabled = remember { adapterConfigPreference.getClusterNavigationSync() }
+    val vehiclePropertyDebugState = rememberVehiclePropertyDebugState()
 
     val windowInfo = LocalWindowInfo.current
     val density = LocalDensity.current
@@ -422,6 +424,8 @@ private fun ControlTabContent(
                     )
                 }
             }
+
+            VehicleSignalsDebugCard(vehiclePropertyDebugState)
         }
     }
 
@@ -510,6 +514,82 @@ private fun ControlTabContent(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun VehicleSignalsDebugCard(vehiclePropertyDebugState: com.carlink.vehicle.VehiclePropertyDebugState) {
+    ControlCard(
+        title = "AAOS Vehicle Signals",
+        icon = Icons.Default.Speed,
+    ) {
+        Text(
+            text = vehiclePropertyDebugState.summary,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+
+        if (vehiclePropertyDebugState.notes.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            vehiclePropertyDebugState.notes.forEach { note ->
+                Text(
+                    text = "• $note",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        if (vehiclePropertyDebugState.signalLines.isEmpty()) {
+            Text(
+                text = "No signal values yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            vehiclePropertyDebugState.signalLines.forEachIndexed { index, line ->
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (index != vehiclePropertyDebugState.signalLines.lastIndex) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            text = "Previous values (changed signals)",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        if (vehiclePropertyDebugState.previousSignalLines.isEmpty()) {
+            Text(
+                text = "No changed signal history yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            vehiclePropertyDebugState.previousSignalLines.forEachIndexed { index, line ->
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (index != vehiclePropertyDebugState.previousSignalLines.lastIndex) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+            }
+        }
     }
 }
 
