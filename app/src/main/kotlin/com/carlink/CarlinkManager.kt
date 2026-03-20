@@ -53,14 +53,18 @@ import com.carlink.video.H264Renderer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.Timer
 import java.util.TimerTask
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -87,7 +91,9 @@ class CarlinkManager(
 
     companion object {
         private const val USB_WAIT_PERIOD_MS = 3000L
+        private const val USB_FIND_CALL_TIMEOUT_MS = 2000L
         private const val PAIR_TIMEOUT_MS = 15000L
+        private const val STATUS_PHONE_FOUND_CONNECTING = "Phone found — connecting..."
 
         // Auto-reconnect constants
         private const val MAX_RECONNECT_ATTEMPTS = 5
@@ -253,6 +259,14 @@ class CarlinkManager(
     // Timers
     private var pairTimeout: Timer? = null
     private var frameIntervalJob: Job? = null
+    private var connectingStallWatchdogJob: Job? = null
+    private var adapterSearchRetryJob: Job? = null
+
+    // UI/status tracking
+    private var currentStatusText: String? = null
+
+    // Incremented when user/lifecycle teardown should invalidate pending auto-retry attempts.
+    private val connectionAttemptEpoch = AtomicInteger(0)
 
     // Phone type tracking for frame interval decisions
     private var currentPhoneType: PhoneType? = null
@@ -596,7 +610,16 @@ class CarlinkManager(
     /**
      * Start connection to the adapter.
      */
-    suspend fun start() {
+    suspend fun start(fromAdapterSearchRetry: Boolean = false) {
+        val startEpoch = connectionAttemptEpoch.get()
+        logInfo(
+            "[START] Enter start(fromAdapterSearchRetry=$fromAdapterSearchRetry, state=$state, epoch=$startEpoch)",
+            tag = Logger.Tags.ADAPTR,
+        )
+        if (!fromAdapterSearchRetry) {
+            cancelAdapterSearchRetry()
+        }
+
         // Guard: Ensure H264Renderer is initialized before starting connection
         // This prevents video data from being discarded when app starts via MediaBrowserService
         // before MainActivity/Surface is ready
@@ -641,7 +664,15 @@ class CarlinkManager(
         if (device == null) {
             logError("Failed to find Carlinkit device", tag = Logger.Tags.USB)
             setState(State.DISCONNECTED)
-            setStatusText("Adapter not found")
+            setStatusText("Adapter not found — retrying...")
+            if (startEpoch == connectionAttemptEpoch.get()) {
+                // Adapter-not-found means discovery timed out before opening USB, so there is
+                // no active adapter session to tear down. restart() would only add extra stop()
+                // cleanup + delay; a fresh start() is the fastest and correct recovery path.
+                scheduleAdapterSearchRetry(startEpoch)
+            } else {
+                logInfo("[USB] Adapter search ended after teardown request - not retrying", tag = Logger.Tags.USB)
+            }
             return
         }
 
@@ -749,8 +780,10 @@ class CarlinkManager(
      */
     fun stop(reboot: Boolean = false) {
         logDebug("[LIFECYCLE] stop() called - clearing frame interval and phoneType", tag = Logger.Tags.VIDEO)
+        invalidatePendingConnectionAttempts()
         clearPairTimeout()
         stopFrameInterval()
+        cancelConnectingStallWatchdog()
         cancelReconnect() // Cancel any pending auto-reconnect
         negotiationRejected = false // Clear rejection flag for fresh connection
         hadPriorSession = false // Reset escalation — user-initiated fresh start
@@ -873,6 +906,8 @@ class CarlinkManager(
 
     fun rebootAdapter() {
         logWarn("[LIFECYCLE] Reboot adapter requested", tag = Logger.Tags.ADAPTR)
+        invalidatePendingConnectionAttempts()
+        cancelConnectingStallWatchdog()
         cancelReconnect()
         stopMicrophoneCapture()
         adapterDriver?.rebootAdapter()
@@ -896,6 +931,7 @@ class CarlinkManager(
      * Release all resources.
      */
     fun release() {
+        invalidatePendingConnectionAttempts()
         stop()
 
         h264Renderer?.stop()
@@ -1141,7 +1177,100 @@ class CarlinkManager(
     }
 
     private fun setStatusText(text: String) {
+        currentStatusText = text
+        updateConnectingStallWatchdog(text)
         callback?.onStatusTextChanged(text)
+    }
+
+    @Synchronized
+    private fun updateConnectingStallWatchdog(statusText: String) {
+        val stallTimeoutMs = AdapterConfigPreference.getInstance(context).getConnectingStallTimeoutSync().timeoutMs
+
+        if (stallTimeoutMs <= 0L) {
+            cancelConnectingStallWatchdog()
+            return
+        }
+
+        if (statusText != STATUS_PHONE_FOUND_CONNECTING) {
+            cancelConnectingStallWatchdog()
+            return
+        }
+
+        if (connectingStallWatchdogJob?.isActive == true) return
+
+        logDebug(
+            "[CONNECT_WATCHDOG] Armed for ${stallTimeoutMs}ms while waiting for phone connection",
+            tag = Logger.Tags.ADAPTR,
+        )
+
+        connectingStallWatchdogJob =
+            scope.launch {
+                delay(stallTimeoutMs)
+
+                val stillStuck =
+                    currentStatusText == STATUS_PHONE_FOUND_CONNECTING &&
+                        state == State.CONNECTING &&
+                        adapterDriver != null
+
+                if (!stillStuck) {
+                    logDebug("[CONNECT_WATCHDOG] Cleared before timeout", tag = Logger.Tags.ADAPTR)
+                    return@launch
+                }
+
+                logWarn(
+                    "[CONNECT_WATCHDOG] Stuck on '$STATUS_PHONE_FOUND_CONNECTING' for " +
+                        "${stallTimeoutMs}ms — restarting connection",
+                    tag = Logger.Tags.ADAPTR,
+                )
+                connectingStallWatchdogJob = null
+                setStatusText("Connection stalled — restarting...")
+                restart()
+            }
+    }
+
+    @Synchronized
+    private fun cancelConnectingStallWatchdog() {
+        connectingStallWatchdogJob?.cancel()
+        connectingStallWatchdogJob = null
+    }
+
+    /**
+     * Schedule an immediate retry after adapter discovery times out.
+     *
+     * Uses the captured epoch to avoid re-entering start() after a user-initiated
+     * stop/reboot/release invalidated this connection attempt.
+     */
+    @Synchronized
+    private fun scheduleAdapterSearchRetry(expectedEpoch: Int) {
+        adapterSearchRetryJob?.cancel()
+        adapterSearchRetryJob =
+            scope.launch {
+                if (connectionAttemptEpoch.get() != expectedEpoch) return@launch
+                if (adapterDriver != null || usbDevice != null || state != State.DISCONNECTED) return@launch
+
+                logInfo("[USB] Adapter not found - retrying search immediately", tag = Logger.Tags.USB)
+                // Clear handle before invoking start() to avoid self-cancel from start()->cancelAdapterSearchRetry().
+                adapterSearchRetryJob = null
+                start(fromAdapterSearchRetry = true)
+            }
+    }
+
+    /** Cancels a queued adapter-search retry, if present. */
+    @Synchronized
+    private fun cancelAdapterSearchRetry() {
+        adapterSearchRetryJob?.cancel()
+        adapterSearchRetryJob = null
+    }
+
+    /**
+     * Invalidates pending connection attempts and retries.
+     *
+     * Call from teardown paths so any in-flight start() that began earlier cannot
+     * schedule a stale retry after the user asked to stop or reboot.
+     */
+    private fun invalidatePendingConnectionAttempts() {
+        connectionAttemptEpoch.incrementAndGet()
+        cancelAdapterSearchRetry()
     }
 
     private fun updateMediaSessionState(state: State) {
@@ -1200,23 +1329,73 @@ class CarlinkManager(
     }
 
     private suspend fun findDevice(): UsbDeviceWrapper? {
-        var device: UsbDeviceWrapper? = null
-        var attempts = 0
+        return withContext(Dispatchers.IO) {
+            var device: UsbDeviceWrapper? = null
+            var attempts = 0
 
-        while (device == null && attempts < 10) {
-            device = UsbDeviceWrapper.findFirst(context, usbManager) { log(it) }
+            log("[USB] Beginning adapter discovery (maxAttempts=10, waitMs=$USB_WAIT_PERIOD_MS, probeTimeoutMs=$USB_FIND_CALL_TIMEOUT_MS)")
 
-            if (device == null) {
-                attempts++
-                delay(USB_WAIT_PERIOD_MS)
+            try {
+                while (device == null && attempts < 10) {
+                    log("[USB] Search Attempt $attempts")
+                    val probeStartMs = System.currentTimeMillis()
+                    device =
+                        try {
+                            // Guard against UsbManager/deviceList binder stalls when no adapter is present.
+                            withTimeout(USB_FIND_CALL_TIMEOUT_MS) {
+                                runInterruptible {
+                                    UsbDeviceWrapper.findFirst(context, usbManager) { log(it) }
+                                }
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                            val elapsedMs = System.currentTimeMillis() - probeStartMs
+                            logWarn(
+                                "[USB] Device probe timed out after ${elapsedMs}ms (limit=${USB_FIND_CALL_TIMEOUT_MS}ms)",
+                                tag = Logger.Tags.USB,
+                            )
+                            null
+                        } catch (e: Exception) {
+                            val elapsedMs = System.currentTimeMillis() - probeStartMs
+                            logWarn(
+                                "[USB] Device probe failed after ${elapsedMs}ms: ${e.message}",
+                                tag = Logger.Tags.USB,
+                            )
+                            null
+                        }
+
+                    val elapsedMs = System.currentTimeMillis() - probeStartMs
+                    if (device != null) {
+                        log("[USB] Probe result: adapter found in ${elapsedMs}ms")
+                    } else {
+                        log("[USB] Probe result: no adapter in ${elapsedMs}ms")
+                    }
+
+                    if (device == null) {
+                        attempts++
+                        log("[USB] Waiting ${USB_WAIT_PERIOD_MS}ms before next attempt")
+                        try {
+                            delay(USB_WAIT_PERIOD_MS)
+                        } catch (e: CancellationException) {
+                            logWarn("[USB] Discovery wait canceled before attempt $attempts", tag = Logger.Tags.USB)
+                            throw e
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                logWarn("[USB] Discovery canceled (attempts=$attempts)", tag = Logger.Tags.USB)
+                throw e
             }
-        }
 
-        if (device != null) {
-            log("Carlinkit device found!")
-        }
+            if (device != null) {
+                log("[USB] Carlinkit device found!")
+            } else {
+                logWarn("[USB] Discovery exhausted after $attempts attempts", tag = Logger.Tags.USB)
+            }
 
-        return device
+            device
+        }
     }
 
     private fun handleMessage(message: Message) {
@@ -1346,7 +1525,7 @@ class CarlinkManager(
                 } else if (message.command == CommandMapping.BT_CONNECTED ||
                     message.command == CommandMapping.DEVICE_FOUND
                 ) {
-                    setStatusText("Phone found — connecting...")
+                    setStatusText(STATUS_PHONE_FOUND_CONNECTING)
                     logDebug("[CMD] ${message.command.name}", tag = Logger.Tags.ADAPTR)
                 } else if (message.command == CommandMapping.INVALID) {
                     unknownCommandCount++
@@ -1883,7 +2062,9 @@ class CarlinkManager(
      * For USB disconnects, schedules auto-reconnect with exponential backoff.
      */
     private fun handleError(error: String) {
+        cancelAdapterSearchRetry()
         clearPairTimeout()
+        cancelConnectingStallWatchdog()
 
         logError("Adapter error: $error", tag = Logger.Tags.ADAPTR)
 

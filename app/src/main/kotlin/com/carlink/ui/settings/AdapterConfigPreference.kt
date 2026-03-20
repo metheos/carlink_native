@@ -163,6 +163,25 @@ enum class HandDriveConfig(
 }
 
 /**
+ * Timeout for auto-restart when connection is stuck on
+ * "Phone found — connecting...".
+ */
+enum class ConnectingStallTimeoutConfig(
+    val timeoutMs: Long,
+    val shortLabel: String,
+) {
+    DISABLED(0L, "Disabled"),
+    SECONDS_5(5_000L, "5s"),
+    SECONDS_10(10_000L, "10s"),
+    SECONDS_30(30_000L, "30s"),
+    ;
+
+    companion object {
+        val DEFAULT = DISABLED
+    }
+}
+
+/**
  * Video resolution configuration for adapter initialization.
  *
  * AUTO uses the detected display resolution (usable area after system UI).
@@ -273,6 +292,9 @@ class AdapterConfigPreference private constructor(
         // GPS forwarding: true = forward vehicle GPS to CarPlay, false = phone uses own GPS
         private val KEY_GPS_FORWARDING = booleanPreferencesKey("gps_forwarding")
 
+        // Connection stall auto-restart timeout: 0=disabled, otherwise timeout in ms
+        private val KEY_CONNECTING_STALL_TIMEOUT_MS = intPreferencesKey("connecting_stall_timeout_ms")
+
         // Cluster navigation: true = show CarPlay turn-by-turn on instrument cluster
         private val KEY_CLUSTER_NAVIGATION = booleanPreferencesKey("cluster_navigation_enabled")
 
@@ -293,6 +315,7 @@ class AdapterConfigPreference private constructor(
         private const val SYNC_CACHE_KEY_FPS = "fps"
         private const val SYNC_CACHE_KEY_HAND_DRIVE = "hand_drive_mode"
         private const val SYNC_CACHE_KEY_GPS_FORWARDING = "gps_forwarding"
+        private const val SYNC_CACHE_KEY_CONNECTING_STALL_TIMEOUT_MS = "connecting_stall_timeout_ms"
         private const val SYNC_CACHE_KEY_CLUSTER_NAVIGATION = "cluster_navigation_enabled"
         private const val SYNC_CACHE_KEY_HAS_COMPLETED_FIRST_INIT = "has_completed_first_init"
         private const val SYNC_CACHE_KEY_LAST_INIT_VERSION_CODE = "last_init_version_code"
@@ -586,10 +609,28 @@ class AdapterConfigPreference private constructor(
             preferences[KEY_GPS_FORWARDING] ?: false
         }
 
+    val connectingStallTimeoutFlow: Flow<ConnectingStallTimeoutConfig> =
+        dataStore.data.map { preferences ->
+            val value = preferences[KEY_CONNECTING_STALL_TIMEOUT_MS] ?: ConnectingStallTimeoutConfig.DEFAULT.timeoutMs.toInt()
+            ConnectingStallTimeoutConfig.entries.find { it.timeoutMs == value.toLong() } ?: ConnectingStallTimeoutConfig.DEFAULT
+        }
+
     /**
      * Get current GPS forwarding configuration synchronously.
      */
     fun getGpsForwardingSync(): Boolean = syncCache.getBoolean(SYNC_CACHE_KEY_GPS_FORWARDING, false)
+
+    /**
+     * Get current connection-stall auto-restart timeout synchronously.
+     */
+    fun getConnectingStallTimeoutSync(): ConnectingStallTimeoutConfig {
+        val value =
+            syncCache.getInt(
+                SYNC_CACHE_KEY_CONNECTING_STALL_TIMEOUT_MS,
+                ConnectingStallTimeoutConfig.DEFAULT.timeoutMs.toInt(),
+            )
+        return ConnectingStallTimeoutConfig.entries.find { it.timeoutMs == value.toLong() } ?: ConnectingStallTimeoutConfig.DEFAULT
+    }
 
     /**
      * Set GPS forwarding configuration.
@@ -604,6 +645,24 @@ class AdapterConfigPreference private constructor(
             logInfo("GPS forwarding preference saved: $enabled", tag = "AdapterConfig")
         } catch (e: Exception) {
             logError("Failed to save GPS forwarding preference: $e", tag = "AdapterConfig")
+            throw e
+        }
+    }
+
+    /**
+     * Set connection-stall auto-restart timeout.
+     * This is a local app control setting — does NOT call addPendingChange().
+     */
+    suspend fun setConnectingStallTimeout(config: ConnectingStallTimeoutConfig) {
+        try {
+            val value = config.timeoutMs.toInt()
+            dataStore.edit { preferences ->
+                preferences[KEY_CONNECTING_STALL_TIMEOUT_MS] = value
+            }
+            syncCache.edit().putInt(SYNC_CACHE_KEY_CONNECTING_STALL_TIMEOUT_MS, value).apply()
+            logInfo("Connecting stall timeout preference saved: ${config.shortLabel} (${config.timeoutMs}ms)", tag = "AdapterConfig")
+        } catch (e: Exception) {
+            logError("Failed to save connecting stall timeout preference: $e", tag = "AdapterConfig")
             throw e
         }
     }
@@ -737,6 +796,7 @@ class AdapterConfigPreference private constructor(
                 preferences.remove(KEY_FPS)
                 preferences.remove(KEY_HAND_DRIVE)
                 preferences.remove(KEY_GPS_FORWARDING)
+                preferences.remove(KEY_CONNECTING_STALL_TIMEOUT_MS)
                 preferences.remove(KEY_CLUSTER_NAVIGATION)
                 preferences.remove(KEY_HAS_COMPLETED_FIRST_INIT)
                 preferences.remove(KEY_LAST_INIT_VERSION_CODE)
@@ -756,6 +816,7 @@ class AdapterConfigPreference private constructor(
                     remove(SYNC_CACHE_KEY_FPS)
                     remove(SYNC_CACHE_KEY_HAND_DRIVE)
                     remove(SYNC_CACHE_KEY_GPS_FORWARDING)
+                    remove(SYNC_CACHE_KEY_CONNECTING_STALL_TIMEOUT_MS)
                     remove(SYNC_CACHE_KEY_CLUSTER_NAVIGATION)
                     remove(SYNC_CACHE_KEY_HAS_COMPLETED_FIRST_INIT)
                     remove(SYNC_CACHE_KEY_LAST_INIT_VERSION_CODE)

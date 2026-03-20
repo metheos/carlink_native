@@ -143,7 +143,17 @@ fun MainScreen(
             )
             if (!hasStartedConnection) {
                 hasStartedConnection = true
-                carlinkManager.start()
+                // Launch outside this LaunchedEffect job so surface/container recomposition
+                // does not cancel in-flight adapter discovery.
+                logInfo(
+                    "[UI_START] Launching initial carlinkManager.start() " +
+                        "(state=$state, container=${containerSize.width}x${containerSize.height}, " +
+                        "surface=${surfaceState.width}x${surfaceState.height})",
+                    tag = "UI",
+                )
+                scope.launch {
+                    carlinkManager.start()
+                }
             }
         }
     }

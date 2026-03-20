@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.PowerOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SettingsInputComponent
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.VideoSettings
 import androidx.compose.material.icons.filled.WebAsset
@@ -84,6 +85,7 @@ import com.carlink.logging.logWarn
 import com.carlink.ui.components.LoadingSpinner
 import com.carlink.ui.settings.AdapterConfigPreference
 import com.carlink.ui.settings.AdapterConfigurationDialog
+import com.carlink.ui.settings.ConnectingStallTimeoutConfig
 import com.carlink.ui.settings.DisplayMode
 import com.carlink.ui.settings.DisplayModeDialog
 import com.carlink.ui.settings.DisplayModePreference
@@ -254,6 +256,10 @@ private fun ControlTabContent(
 
     val adapterConfigPreference = remember { AdapterConfigPreference.getInstance(context) }
     var showAdapterConfigDialog by remember { mutableStateOf(false) }
+    var showConnectingStallTimeoutDialog by remember { mutableStateOf(false) }
+    val connectingStallTimeout by adapterConfigPreference.connectingStallTimeoutFlow.collectAsStateWithLifecycle(
+        initialValue = ConnectingStallTimeoutConfig.DEFAULT,
+    )
     val clusterNavigationEnabled = remember { adapterConfigPreference.getClusterNavigationSync() }
 
     val windowInfo = LocalWindowInfo.current
@@ -358,6 +364,27 @@ private fun ControlTabContent(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Display Mode",
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    FilledTonalButton(
+                        onClick = { showConnectingStallTimeoutDialog = true },
+                        modifier = Modifier.fillMaxWidth().height(AutomotiveDimens.ButtonMinHeight),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Timer,
+                            contentDescription = "Configure connection stall timeout",
+                            modifier = Modifier.size(AutomotiveDimens.IconSize),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Connection Stall Auto-Restart: ${connectingStallTimeout.shortLabel}",
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -511,6 +538,75 @@ private fun ControlTabContent(
             },
         )
     }
+
+    if (showConnectingStallTimeoutDialog) {
+        ConnectingStallTimeoutDialog(
+            selected = connectingStallTimeout,
+            onSelect = { selectedTimeout ->
+                scope.launch {
+                    adapterConfigPreference.setConnectingStallTimeout(selectedTimeout)
+                }
+                showConnectingStallTimeoutDialog = false
+            },
+            onDismiss = { showConnectingStallTimeoutDialog = false },
+        )
+    }
+}
+
+@Composable
+private fun ConnectingStallTimeoutDialog(
+    selected: ConnectingStallTimeoutConfig,
+    onSelect: (ConnectingStallTimeoutConfig) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colorScheme = MaterialTheme.colorScheme
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = Icons.Default.Timer,
+                contentDescription = null,
+                tint = colorScheme.primary,
+            )
+        },
+        title = { Text("Connection Stall Auto-Restart") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Choose how long to wait on 'Phone found - connecting...' before restarting.",
+                    color = colorScheme.onSurfaceVariant,
+                )
+                listOf(
+                    ConnectingStallTimeoutConfig.DISABLED,
+                    ConnectingStallTimeoutConfig.SECONDS_5,
+                    ConnectingStallTimeoutConfig.SECONDS_10,
+                    ConnectingStallTimeoutConfig.SECONDS_30,
+                ).forEach { option ->
+                    FilledTonalButton(
+                        onClick = { onSelect(option) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors =
+                            if (selected == option) {
+                                ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = colorScheme.primaryContainer,
+                                    contentColor = colorScheme.onPrimaryContainer,
+                                )
+                            } else {
+                                ButtonDefaults.filledTonalButtonColors()
+                            },
+                    ) {
+                        Text(option.shortLabel)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+    )
 }
 
 /** Debug-only tab: launcher home settings. */
